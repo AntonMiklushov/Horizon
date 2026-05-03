@@ -1,7 +1,7 @@
 from __future__ import annotations
 
 import json
-from datetime import datetime, timedelta
+from datetime import datetime, timedelta, timezone
 from enum import Enum
 from pathlib import Path
 from typing import Any, Dict, List, Optional, Tuple
@@ -176,7 +176,10 @@ class EvidenceChecker:
             missing.append("missing publication date")
             confidence = "low"
         else:
-            if item.published_at.replace(tzinfo=None) < datetime.utcnow() - timedelta(hours=self.time_window_hours):
+            published_at = item.published_at
+            if published_at.tzinfo is not None:
+                published_at = published_at.astimezone(timezone.utc).replace(tzinfo=None)
+            if published_at < datetime.now(timezone.utc).replace(tzinfo=None) - timedelta(hours=self.time_window_hours):
                 conflicts.append("outside time window")
 
         if claim_type in {"official_statement", "party_claim"} and confidence == "high":

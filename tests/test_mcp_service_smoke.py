@@ -129,7 +129,7 @@ def test_filter_items_uses_public_topic_dedup_api(tmp_path: Path, monkeypatch) -
     monkeypatch.setattr("src.mcp.service.make_storage", lambda runtime, config_path: object())
 
     class FakeOrchestrator:
-        def merge_topic_duplicates(self, items):  # type: ignore[no-untyped-def]
+        async def merge_topic_duplicates(self, items):  # type: ignore[no-untyped-def]
             return items[:1]
 
     monkeypatch.setattr(
