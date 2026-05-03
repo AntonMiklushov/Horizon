@@ -33,6 +33,8 @@ class HorizonRuntime:
     ContentAnalyzer: Any
     ContentEnricher: Any
     DailySummarizer: Any
+    PersonalBriefingRenderer: Any
+    run_briefing_critic: Any
 
 
 def resolve_horizon_path(explicit: str | None = None) -> Path:
@@ -122,6 +124,7 @@ def load_runtime(horizon_path: Path) -> HorizonRuntime:
         analyzer = importlib.import_module("src.ai.analyzer")
         enricher = importlib.import_module("src.ai.enricher")
         summarizer = importlib.import_module("src.ai.summarizer")
+        personal_briefing = importlib.import_module("src.ai.personal_briefing")
     except Exception as exc:  # pragma: no cover - import failure edge case
         raise HorizonMcpError(
             code="HZ_IMPORT_FAILED",
@@ -139,6 +142,8 @@ def load_runtime(horizon_path: Path) -> HorizonRuntime:
         ContentAnalyzer=analyzer.ContentAnalyzer,
         ContentEnricher=enricher.ContentEnricher,
         DailySummarizer=summarizer.DailySummarizer,
+        PersonalBriefingRenderer=personal_briefing.PersonalBriefingRenderer,
+        run_briefing_critic=personal_briefing.run_briefing_critic,
     )
 
 

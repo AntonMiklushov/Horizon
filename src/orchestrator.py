@@ -7,8 +7,8 @@ from zoneinfo import ZoneInfo
 from typing import List, Dict
 from urllib.parse import urlparse
 import httpx
-from rich.console import Console
 
+from .console import make_console
 from .models import Config, ContentItem
 from .storage.manager import StorageManager
 from .services.email import EmailManager
@@ -45,7 +45,7 @@ class HorizonOrchestrator:
         """
         self.config = config
         self.storage = storage
-        self.console = Console()
+        self.console = make_console()
         self.email_manager = EmailManager(config.email, console=self.console) if config.email else None
         self.webhook_notifier = (
             WebhookNotifier(config.webhook, console=self.console)

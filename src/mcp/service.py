@@ -271,6 +271,7 @@ class HorizonPipelineService:
         source_stage: str = "raw",
         horizon_path: str | None = None,
         config_path: str | None = None,
+        max_items: int | None = None,
     ) -> dict[str, Any]:
         items, ctx = self._load_stage_items(
             run_id=run_id,
@@ -281,10 +282,14 @@ class HorizonPipelineService:
 
         if not items:
             raise HorizonMcpError(code="HZ_EMPTY_INPUT", message="No items available for scoring.")
+        scored_input, limit_meta = self._limit_items(items, max_items, "scoring")
 
         ai_client = ctx.runtime.create_ai_client(ctx.config.ai)
-        analyzer = ctx.runtime.ContentAnalyzer(ai_client)
-        scored_items = await analyzer.analyze_batch(items)
+        analyzer = ctx.runtime.ContentAnalyzer(
+            ai_client,
+            personal_briefing_mode=self._personal_briefing_enabled(ctx.config),
+        )
+        scored_items = await analyzer.analyze_batch(scored_input)
 
         self.run_store.save_items(run_id, "scored", items_to_dicts(scored_items))
         score_threshold = ctx.config.filtering.ai_score_threshold
@@ -294,6 +299,9 @@ class HorizonPipelineService:
             run_id,
             {
                 "scored_count": len(scored_items),
+                "scored_input_count": len(scored_input),
+                "scored_source_count": len(items),
+                **limit_meta,
                 "scored_threshold": score_threshold,
                 "scored_above_threshold": len(above_threshold),
             },
@@ -302,6 +310,9 @@ class HorizonPipelineService:
         return {
             "run_id": run_id,
             "scored": len(scored_items),
+            "source_items": len(items),
+            "items_used": len(scored_input),
+            "skipped_by_limit": max(0, len(items) - len(scored_input)),
             "above_threshold": len(above_threshold),
             "score_distribution": self._score_distribution(scored_items),
             "artifact": str((self.run_store.run_dir(run_id) / "scored_items.json").resolve()),
@@ -362,6 +373,7 @@ class HorizonPipelineService:
         source_stage: str = "filtered",
         horizon_path: str | None = None,
         config_path: str | None = None,
+        max_items: int | None = None,
     ) -> dict[str, Any]:
         items, ctx = self._load_stage_items(
             run_id=run_id,
@@ -372,28 +384,35 @@ class HorizonPipelineService:
 
         if not items:
             raise HorizonMcpError(code="HZ_EMPTY_INPUT", message="No items available for enrichment.")
+        enrichment_input, limit_meta = self._limit_items(items, max_items, "enrichment")
 
         ai_client = ctx.runtime.create_ai_client(ctx.config.ai)
         enricher = ctx.runtime.ContentEnricher(ai_client)
-        await enricher.enrich_batch(items)
+        await enricher.enrich_batch(enrichment_input)
 
-        self.run_store.save_items(run_id, "enriched", items_to_dicts(items))
+        self.run_store.save_items(run_id, "enriched", items_to_dicts(enrichment_input))
 
         citation_count = 0
-        for item in items:
+        for item in enrichment_input:
             citation_count += len(item.metadata.get("sources", []))
 
         meta = self.run_store.update_meta(
             run_id,
             {
-                "enriched_count": len(items),
+                "enriched_count": len(enrichment_input),
+                "enrichment_input_count": len(enrichment_input),
+                "enrichment_source_count": len(items),
+                **limit_meta,
                 "citation_count": citation_count,
             },
         )
 
         return {
             "run_id": run_id,
-            "enriched": len(items),
+            "enriched": len(enrichment_input),
+            "source_items": len(items),
+            "items_used": len(enrichment_input),
+            "skipped_by_limit": max(0, len(items) - len(enrichment_input)),
             "citation_count": citation_count,
             "artifact": str((self.run_store.run_dir(run_id) / "enriched_items.json").resolve()),
             "meta": meta,
@@ -407,6 +426,7 @@ class HorizonPipelineService:
         horizon_path: str | None = None,
         config_path: str | None = None,
         save_to_horizon_data: bool = False,
+        max_items: int | None = None,
     ) -> dict[str, Any]:
         stage = source_stage or self._pick_summary_stage(run_id)
         items, ctx = self._load_stage_items(
@@ -415,17 +435,29 @@ class HorizonPipelineService:
             horizon_path=horizon_path,
             config_path=config_path,
         )
+        summary_items, limit_meta = self._limit_items(items, max_items, "summary")
 
         total_fetched = self._total_fetched(run_id, fallback=len(items))
         date_str = datetime.now(timezone.utc).strftime("%Y-%m-%d")
 
-        summarizer = ctx.runtime.DailySummarizer()
-        summary = await summarizer.generate_summary(
-            items,
-            date_str,
-            total_fetched,
-            language=language,
-        )
+        if self._uses_personal_summary(ctx.config, language):
+            renderer = ctx.runtime.PersonalBriefingRenderer()
+            summary = renderer.render(date_str, summary_items, tracked=[])
+            critic_config = ctx.config.personal_briefing.critic_pass
+            if critic_config.enabled:
+                critic = ctx.runtime.run_briefing_critic(summary, summary_items)
+                if (not critic.passed) and critic_config.auto_revise_once:
+                    summary += "\n\n## Audit warnings\n" + "\n".join(
+                        [f"- {issue}" for issue in critic.critical_issues]
+                    )
+        else:
+            summarizer = ctx.runtime.DailySummarizer()
+            summary = await summarizer.generate_summary(
+                summary_items,
+                date_str,
+                total_fetched,
+                language=language,
+            )
 
         run_summary_path = self.run_store.save_summary(run_id, language, summary)
         published_path = None
@@ -438,6 +470,9 @@ class HorizonPipelineService:
             "summary_language": language,
             "summary_generated_at": datetime.now(timezone.utc).isoformat(),
             "summary_artifact": str(run_summary_path.resolve()),
+            "summary_source_count": len(items),
+            "summary_items_used": len(summary_items),
+            **limit_meta,
         }
         if published_path:
             summary_meta["summary_published_path"] = str(Path(published_path).resolve())
@@ -448,7 +483,9 @@ class HorizonPipelineService:
             "language": language,
             "source_stage": stage,
             "total_fetched": total_fetched,
-            "items_used": len(items),
+            "source_items": len(items),
+            "items_used": len(summary_items),
+            "skipped_by_limit": max(0, len(items) - len(summary_items)),
             "summary_path": str(run_summary_path.resolve()),
             "published_path": str(Path(published_path).resolve()) if published_path else None,
             "preview": summary[:1200],
@@ -466,6 +503,8 @@ class HorizonPipelineService:
         enrich: bool = True,
         topic_dedup: bool = True,
         save_to_horizon_data: bool = False,
+        max_raw_items: int | None = None,
+        max_filtered_items: int | None = None,
     ) -> dict[str, Any]:
         fetch_result = await self.fetch_items(
             hours=hours,
@@ -479,6 +518,7 @@ class HorizonPipelineService:
             run_id=run_id,
             horizon_path=horizon_path,
             config_path=config_path,
+            max_items=max_raw_items,
         )
 
         filter_result = await self.filter_items(
@@ -497,6 +537,7 @@ class HorizonPipelineService:
                 source_stage="filtered",
                 horizon_path=horizon_path,
                 config_path=config_path,
+                max_items=max_filtered_items,
             )
             stage_for_summary = "enriched"
 
@@ -516,6 +557,7 @@ class HorizonPipelineService:
                 horizon_path=horizon_path,
                 config_path=config_path,
                 save_to_horizon_data=save_to_horizon_data,
+                max_items=max_filtered_items if not enrich else None,
             )
             summaries.append(summary_result)
 
@@ -526,6 +568,10 @@ class HorizonPipelineService:
             "filter": filter_result,
             "enrich": enrich_result,
             "summaries": summaries,
+            "limits": {
+                "max_raw_items": max_raw_items,
+                "max_filtered_items": max_filtered_items,
+            },
             "meta": self.run_store.load_meta(run_id),
         }
 
@@ -604,6 +650,38 @@ class HorizonPipelineService:
             else:
                 buckets["9-10"] += 1
         return buckets
+
+    @staticmethod
+    def _personal_briefing_enabled(config: Any) -> bool:
+        personal = getattr(config, "personal_briefing", None)
+        return bool(getattr(personal, "enabled", False))
+
+    @staticmethod
+    def _uses_personal_summary(config: Any, language: str) -> bool:
+        personal = getattr(config, "personal_briefing", None)
+        return bool(
+            getattr(personal, "enabled", False)
+            and language == getattr(personal, "language", None)
+        )
+
+    @staticmethod
+    def _limit_items(items: list[Any], max_items: int | None, stage_name: str) -> tuple[list[Any], dict[str, Any]]:
+        if max_items is None:
+            return items, {
+                f"{stage_name}_limit": None,
+                f"{stage_name}_skipped_by_limit": 0,
+            }
+        if max_items <= 0:
+            raise HorizonMcpError(
+                code="HZ_INVALID_INPUT",
+                message=f"max_items for {stage_name} must be greater than 0.",
+                details={"stage": stage_name, "max_items": max_items},
+            )
+        limited = items[:max_items]
+        return limited, {
+            f"{stage_name}_limit": max_items,
+            f"{stage_name}_skipped_by_limit": max(0, len(items) - len(limited)),
+        }
 
     async def send_webhook(
         self,

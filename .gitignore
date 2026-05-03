@@ -2,6 +2,7 @@
 __pycache__/
 *.py[cod]
 *$py.class
+.pytest_cache/
 *.so
 .Python
 build/
@@ -52,6 +53,12 @@ logs/*.log
 
 # uv
 .uv/
+
+# Local QA / Codex runtime artifacts
+horizon-qa/
+.horizon-qa/
+.horizon-codex-*/
+.codex-tmp*/
 
 # todo
 todo.txt

@@ -21,6 +21,8 @@ The MCP layer does not reimplement Horizon business logic. It reuses the existin
 | `hz_get_run_summary` | Read a generated summary |
 | `hz_get_metrics` | Read in-memory server metrics |
 
+`hz_score_items`, `hz_enrich_items`, and `hz_generate_summary` accept `max_items` for bounded QA runs. `hz_run_pipeline` exposes the same control as `max_raw_items` for scoring input and `max_filtered_items` for enrichment/summary input. These limits do not truncate the `raw` artifact; they only limit later LLM stages and are recorded in run metadata.
+
 ## Resources
 
 - `horizon://server/info`

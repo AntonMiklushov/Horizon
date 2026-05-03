@@ -6,13 +6,13 @@ import sys
 from pathlib import Path
 
 from dotenv import load_dotenv
-from rich.console import Console
 
+from .console import make_console
 from .storage.manager import StorageManager
 from .orchestrator import HorizonOrchestrator
 
 
-console = Console()
+console = make_console()
 
 
 def print_banner():

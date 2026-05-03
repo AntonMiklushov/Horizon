@@ -176,6 +176,7 @@ async def hz_score_items(
     source_stage: str = "raw",
     horizon_path: str | None = None,
     config_path: str | None = None,
+    max_items: int | None = None,
 ) -> dict[str, Any]:
     """Score a stage into the scored stage."""
 
@@ -186,6 +187,7 @@ async def hz_score_items(
             source_stage=source_stage,
             horizon_path=horizon_path,
             config_path=config_path,
+            max_items=max_items,
         ),
     )
 
@@ -220,6 +222,7 @@ async def hz_enrich_items(
     source_stage: str = "filtered",
     horizon_path: str | None = None,
     config_path: str | None = None,
+    max_items: int | None = None,
 ) -> dict[str, Any]:
     """Enrich filtered items into the enriched stage."""
 
@@ -230,6 +233,7 @@ async def hz_enrich_items(
             source_stage=source_stage,
             horizon_path=horizon_path,
             config_path=config_path,
+            max_items=max_items,
         ),
     )
 
@@ -242,6 +246,7 @@ async def hz_generate_summary(
     horizon_path: str | None = None,
     config_path: str | None = None,
     save_to_horizon_data: bool = False,
+    max_items: int | None = None,
 ) -> dict[str, Any]:
     """Generate a markdown summary from a stage."""
 
@@ -254,6 +259,7 @@ async def hz_generate_summary(
             horizon_path=horizon_path,
             config_path=config_path,
             save_to_horizon_data=save_to_horizon_data,
+            max_items=max_items,
         ),
     )
 
@@ -269,6 +275,8 @@ async def hz_run_pipeline(
     enrich: bool = True,
     topic_dedup: bool = True,
     save_to_horizon_data: bool = False,
+    max_raw_items: int | None = None,
+    max_filtered_items: int | None = None,
 ) -> dict[str, Any]:
     """Run fetch -> score -> filter -> enrich -> summarize in one call."""
 
@@ -284,6 +292,8 @@ async def hz_run_pipeline(
             enrich=enrich,
             topic_dedup=topic_dedup,
             save_to_horizon_data=save_to_horizon_data,
+            max_raw_items=max_raw_items,
+            max_filtered_items=max_filtered_items,
         ),
     )
 

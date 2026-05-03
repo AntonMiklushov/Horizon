@@ -10,6 +10,7 @@ from src.ai.personal_briefing import (
     SourcePolicyClassifier,
     conservative_default_policy,
     load_source_policy,
+    run_briefing_critic,
 )
 from src.ai.prompts import PERSONAL_BRIEFING_ANALYSIS_USER
 from src.models import AIConfig, AIProvider, Config, ContentItem, FilteringConfig, SourceType, SourcesConfig
@@ -258,6 +259,26 @@ def test_renderer_does_not_render_main_for_disputed_only():
     out = PersonalBriefingRenderer().render("2026-05-02", [item])
     assert "## Спорные / слабоподтверждённые сообщения" in out
     assert "## Главное" not in out
+
+
+def test_renderer_puts_unknown_topics_in_other_without_critic_warning():
+    item = mk_item("https://interfax.ru/security", title="security item")
+    item.metadata.update({
+        "topic": "russia_security",
+        "confidence": "medium",
+        "summary": "security summary",
+        "source_role": "russian_institutional_frame",
+        "source_name": "Interfax",
+        "source_url": "https://interfax.ru/security",
+        "claim_type": "party_claim",
+    })
+
+    out = PersonalBriefingRenderer().render("2026-05-03", [item])
+    critic = run_briefing_critic(out, [item])
+
+    assert "## Другое" in out
+    assert "### security item" in out
+    assert critic.passed is True
 
 
 def test_cross_source_duplicate_merge_preserves_supporting_sources(tmp_path):

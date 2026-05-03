@@ -3,6 +3,8 @@
 from __future__ import annotations
 
 import json
+import os
+import time
 from dataclasses import dataclass
 from datetime import datetime, timezone
 from pathlib import Path
@@ -54,7 +56,7 @@ class RunStore:
     def save_summary(self, run_id: str, language: str, markdown: str) -> Path:
         filename = f"summary-{language}.md"
         path = self.run_dir(run_id) / filename
-        path.write_text(markdown, encoding="utf-8")
+        self._write_text(path, markdown)
         return path
 
     def load_summary(self, run_id: str, language: str) -> str:
@@ -104,10 +106,7 @@ class RunStore:
 
     def write_json(self, run_id: str, filename: str, payload: Any) -> Path:
         path = self.run_dir(run_id) / filename
-        path.write_text(
-            json.dumps(payload, ensure_ascii=False, indent=2),
-            encoding="utf-8",
-        )
+        self._write_text(path, json.dumps(payload, ensure_ascii=False, indent=2))
         return path
 
     def read_json(self, run_id: str, filename: str) -> Any:
@@ -131,3 +130,26 @@ class RunStore:
     @staticmethod
     def _utc_now() -> str:
         return datetime.now(timezone.utc).isoformat()
+
+    @staticmethod
+    def _write_text(path: Path, text: str) -> None:
+        last_error: PermissionError | None = None
+        for attempt in range(3):
+            tmp_path = path.with_name(f".{path.name}.{uuid4().hex}.tmp")
+            try:
+                tmp_path.write_text(text, encoding="utf-8")
+                os.replace(tmp_path, path)
+                return
+            except PermissionError as exc:
+                last_error = exc
+                try:
+                    if tmp_path.exists():
+                        tmp_path.unlink()
+                except OSError:
+                    pass
+                if attempt < 2:
+                    time.sleep(0.1 * (attempt + 1))
+                    continue
+                raise
+        if last_error is not None:
+            raise last_error

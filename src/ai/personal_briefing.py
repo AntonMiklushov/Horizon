@@ -219,13 +219,18 @@ class PersonalBriefingRenderer:
             ("Технологии: AI, Open Source, Big Tech", {"tech_ai", "open_source", "big_tech"}),
             ("Наука", "science"), ("Мир", "world"), ("Другое", "other")
         ]
+        rendered_ids: set[str] = set()
         for title, topic in sections:
-            sec = [i for i in highs if (i.metadata.get("topic") in topic if isinstance(topic, set) else i.metadata.get("topic") == topic)]
+            if topic == "other":
+                sec = [i for i in highs if i.id not in rendered_ids]
+            else:
+                sec = [i for i in highs if (i.metadata.get("topic") in topic if isinstance(topic, set) else i.metadata.get("topic") == topic)]
             if not sec:
                 continue
             out += ["", f"## {title}"]
             for it in sec:
                 out += self._card(it)
+                rendered_ids.add(it.id)
 
         if disputed:
             out += ["", "## Спорные / слабоподтверждённые сообщения"]
@@ -273,7 +278,11 @@ def run_briefing_critic(markdown: str, items: List[ContentItem]) -> CriticResult
     critical, minor, edits = [], [], []
     if "date unknown" in markdown:
         minor.append("some items have unknown publication dates")
-    if markdown.count("### ") != len(set([i.id for i in items])):
+    card_count = markdown.count("### ")
+    expected_cards = len(set([i.id for i in items]))
+    if card_count < expected_cards:
+        critical.append("missing cards detected")
+    elif card_count > expected_cards:
         critical.append("duplicate cards detected")
     for it in items:
         if it.metadata.get("source_role") in {"blocked_as_fact_source", "unclassified"} and it.metadata.get("claim_type") == "confirmed_fact":
