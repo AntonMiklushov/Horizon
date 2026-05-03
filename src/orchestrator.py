@@ -3,6 +3,7 @@
 import asyncio
 from collections import defaultdict
 from datetime import datetime, timedelta, timezone
+from zoneinfo import ZoneInfo
 from typing import List, Dict
 from urllib.parse import urlparse
 import httpx
@@ -22,6 +23,13 @@ from .ai.client import create_ai_client
 from .ai.analyzer import ContentAnalyzer
 from .ai.summarizer import DailySummarizer
 from .ai.enricher import ContentEnricher
+from .ai.personal_briefing import (
+    EvidenceChecker,
+    PersonalBriefingRenderer,
+    SourcePolicyClassifier,
+    load_source_policy,
+    run_briefing_critic,
+)
 from .ai.tokens import get_usage_snapshot
 
 
@@ -44,6 +52,14 @@ class HorizonOrchestrator:
             if config.webhook and config.webhook.enabled
             else None
         )
+        self.personal_policy = None
+        self.personal_classifier = None
+        if self.config.personal_briefing.enabled:
+            policy, warning = load_source_policy(self.config.personal_briefing.source_policy_file)
+            self.personal_policy = policy
+            self.personal_classifier = SourcePolicyClassifier(policy)
+            if warning:
+                self.console.print(f"[yellow]⚠️ {warning}[/yellow]")
 
     async def run(self, force_hours: int = None) -> None:
         """Execute the complete workflow.
@@ -65,35 +81,61 @@ class HorizonOrchestrator:
 
             # 2. Fetch content from all sources
             all_items = await self.fetch_all_sources(since)
+            if self.config.personal_briefing.enabled:
+                self._classify_personal_source_metadata(all_items)
             self.console.print(f"📥 Fetched {len(all_items)} items from all sources\n")
-
-            if not all_items:
+            if not all_items and not self.config.personal_briefing.enabled:
                 self.console.print("[yellow]No new content found. Exiting.[/yellow]")
                 return
 
+
+            tracked_excluded = []
+            candidates = all_items
+            if self.config.personal_briefing.enabled:
+                candidates, pretracked = self._prefilter_personal_candidates(all_items)
+                tracked_excluded.extend(pretracked)
+
             # 3. Merge cross-source duplicates (same URL from different sources)
-            merged_items = self.merge_cross_source_duplicates(all_items)
-            if len(merged_items) < len(all_items):
+            merged_items = self.merge_cross_source_duplicates(candidates)
+            if len(merged_items) < len(candidates):
                 self.console.print(
-                    f"🔗 Merged {len(all_items) - len(merged_items)} cross-source duplicates "
+                    f"🔗 Merged {len(candidates) - len(merged_items)} cross-source duplicates "
                     f"→ {len(merged_items)} unique items\n"
                 )
 
             # 4. Analyze with AI
-            analyzed_items = await self._analyze_content(merged_items)
+            analyzed_items = await self._analyze_content(merged_items) if merged_items else []
             self.console.print(f"🤖 Analyzed {len(analyzed_items)} items with AI\n")
 
-            # 5. Filter by score threshold
-            threshold = self.config.filtering.ai_score_threshold
-            important_items = [
-                item for item in analyzed_items
-                if item.ai_score and item.ai_score >= threshold
-            ]
+            if self.config.personal_briefing.enabled:
+                checker = EvidenceChecker(self.config.filtering.time_window_hours)
+                important_items = []
+                priority_topics = {"russia", "moscow", "world_economy", "tech_ai", "open_source", "big_tech", "science"}
+                for item in analyzed_items:
+                    checker.audit_item(item)
+                    topic = item.metadata.get("topic", "other")
+                    if topic in priority_topics:
+                        thr = self.config.personal_briefing.min_importance_priority_topics
+                    else:
+                        thr = self.config.personal_briefing.min_importance
+                    reason = None
+                    if item.metadata.get("include") is False:
+                        reason = "weak evidence"
+                    elif item.metadata.get("source_role") in {"blocked_as_fact_source", "unclassified"}:
+                        reason = "blocked source" if item.metadata.get("source_role") == "blocked_as_fact_source" else "unclassified"
+                    elif "outside time window" in item.metadata.get("source_conflicts", []):
+                        reason = "outside time window"
+                    elif (item.ai_score or 0) < thr:
+                        reason = "low significance"
+                    if reason:
+                        tracked_excluded.append({"item": item.title, "reason": reason})
+                    else:
+                        important_items.append(item)
+            else:
+                threshold = self.config.filtering.ai_score_threshold
+                important_items = [item for item in analyzed_items if item.ai_score and item.ai_score >= threshold]
+                self.console.print(f"⭐️ {len(important_items)} items scored ≥ {threshold}\n")
             important_items.sort(key=lambda x: x.ai_score or 0, reverse=True)
-
-            self.console.print(
-                f"⭐️ {len(important_items)} items scored ≥ {threshold}\n"
-            )
 
             # 5.5 Semantic deduplication: drop items covering the same topic
             deduped_items = await self.merge_topic_duplicates(important_items)
@@ -105,7 +147,10 @@ class HorizonOrchestrator:
             important_items = deduped_items
 
             # 5.6 Optional second-stage Twitter reply expansion + targeted re-analysis
-            await self._expand_twitter_discussion(important_items)
+            if not self.config.personal_briefing.enabled:
+                await self._expand_twitter_discussion(important_items)
+            # In personal mode we skip reply expansion for now because reply expansion
+            # can mutate claim metadata after evidence checks.
 
             # Show per-sub-source selection breakdown
             selected_counts: Dict[str, int] = defaultdict(int)
@@ -119,11 +164,26 @@ class HorizonOrchestrator:
             # 6. Search related stories + enrich with background knowledge (2nd AI pass)
             await self._enrich_important_items(important_items)
 
-            # 7. Generate and save daily summaries for each configured language
-            today = datetime.now(timezone.utc).strftime("%Y-%m-%d")
-            for lang in self.config.ai.languages:
-                summarizer = DailySummarizer()
-                summary = await summarizer.generate_summary(important_items, today, len(all_items), language=lang)
+            # 7. Generate and save daily summaries
+            tz = ZoneInfo(self.config.personal_briefing.timezone if self.config.personal_briefing.enabled else "UTC")
+            today = datetime.now(tz).strftime("%Y-%m-%d")
+            langs = list(self.config.ai.languages)
+            if self.config.personal_briefing.enabled and not self.config.personal_briefing.generate_standard_summaries:
+                langs = [self.config.personal_briefing.language]
+            elif self.config.personal_briefing.enabled and self.config.personal_briefing.language not in langs:
+                langs.append(self.config.personal_briefing.language)
+            for lang in langs:
+                summarizer = None
+                if self.config.personal_briefing.enabled and lang == self.config.personal_briefing.language:
+                    renderer = PersonalBriefingRenderer()
+                    summary = renderer.render(today, important_items, tracked=tracked_excluded[:10])
+                    if self.config.personal_briefing.critic_pass.enabled:
+                        critic = run_briefing_critic(summary, important_items)
+                        if (not critic.passed) and self.config.personal_briefing.critic_pass.auto_revise_once:
+                            summary += "\n\n## Audit warnings\n" + "\n".join([f"- {x}" for x in critic.critical_issues])
+                else:
+                    summarizer = DailySummarizer()
+                    summary = await summarizer.generate_summary(important_items, today, len(all_items), language=lang)
 
                 # Save to data/summaries/
                 summary_path = self.storage.save_daily_summary(today, summary, language=lang)
@@ -173,6 +233,8 @@ class HorizonOrchestrator:
 
                 # Send webhook notification if configured
                 if self.webhook_notifier:
+                    if summarizer is None:
+                        summarizer = DailySummarizer()
                     await self.webhook_notifier.send_daily_summary(
                         summary=summary,
                         important_items=important_items,
@@ -294,11 +356,27 @@ class HorizonOrchestrator:
         sub_counts: Dict[str, int] = defaultdict(int)
         for item in items:
             sub_counts[self._sub_source_label(item)] += 1
+        if self.personal_classifier:
+            self._classify_personal_source_metadata(items)
         if len(sub_counts) > 1:
             for sub, count in sorted(sub_counts.items()):
                 self.console.print(f"      • {sub}: {count}")
 
         return items
+
+    def _classify_personal_source_metadata(self, items: List[ContentItem]) -> None:
+        if not self.personal_classifier:
+            return
+        for item in items:
+            item.metadata.setdefault("source_name", item.metadata.get("feed_name") or item.source_type.value)
+            item.metadata.setdefault("source_url", str(item.url))
+            item.metadata.setdefault("source_role", "unclassified")
+            item.metadata.setdefault("source_reliability_tier", "unknown")
+            item.metadata.setdefault("source_policy_notes", "")
+            item.metadata.setdefault("publication_date", item.published_at.isoformat() if item.published_at else None)
+            item.metadata.setdefault("fetched_at", item.fetched_at.isoformat())
+            item.metadata.setdefault("original_language", None)
+            item.metadata.update(self.personal_classifier.classify(item))
 
     @staticmethod
     def _sub_source_label(item: ContentItem) -> str:
@@ -313,6 +391,37 @@ class HorizonOrchestrator:
         if meta.get("repo"):
             return meta["repo"]
         return item.author or "unknown"
+
+    def _prefilter_personal_candidates(self, items: List[ContentItem]) -> tuple[List[ContentItem], List[Dict[str, str]]]:
+        allowed = {a.lower() for a in (self.personal_policy.allowed_social_primary_actors if self.personal_policy else [])}
+        candidates: List[ContentItem] = []
+        excluded: List[Dict[str, str]] = []
+        for item in items:
+            role = item.metadata.get("source_role", "unclassified")
+            parsed = urlparse(str(item.url))
+            path_parts = [p for p in parsed.path.split("/") if p]
+            url_handle = (path_parts[0].lower().lstrip("@") if path_parts else "")
+            meta = item.metadata
+            handles = {
+                (item.author or "").lower().lstrip("@"),
+                str(meta.get("username", "")).lower().lstrip("@"),
+                str(meta.get("handle", "")).lower().lstrip("@"),
+                url_handle,
+            }
+            reason = None
+            if role == "blocked_as_fact_source":
+                reason = "blocked source"
+            elif role == "unclassified":
+                reason = "unclassified"
+            elif role == "social_primary_statement_only" and handles.isdisjoint(allowed):
+                reason = "social-only"
+            elif role == "social_primary_statement_only":
+                item.metadata["claim_type"] = "primary_statement"
+            if reason:
+                excluded.append({"item": item.title, "reason": reason})
+            else:
+                candidates.append(item)
+        return candidates, excluded
 
     def merge_cross_source_duplicates(self, items: List[ContentItem]) -> List[ContentItem]:
         """Merge items that point to the same URL from different sources.
@@ -353,6 +462,7 @@ class HorizonOrchestrator:
 
             # Merge metadata and source info from other items
             all_sources = set()
+            supporting = list(primary.metadata.get("supporting_sources", []))
             for item in group:
                 all_sources.add(item.source_type.value)
                 # Merge metadata (engagement, discussion, etc.)
@@ -360,12 +470,24 @@ class HorizonOrchestrator:
                     if mk not in primary.metadata or not primary.metadata[mk]:
                         primary.metadata[mk] = mv
 
+                if item is not primary:
+                    supporting.append({
+                        "source_name": item.metadata.get("source_name", item.source_type.value),
+                        "source_url": str(item.url),
+                        "source_role": item.metadata.get("source_role", "unclassified"),
+                        "source_reliability_tier": item.metadata.get("source_reliability_tier", "unknown"),
+                        "publication_date": item.metadata.get("publication_date"),
+                        "title": item.title,
+                    })
+
                 # Append content (e.g., comments from another source)
                 if item is not primary and item.content:
                     if primary.content and item.content not in primary.content:
                         primary.content = (primary.content or "") + f"\n\n--- From {item.source_type.value} ---\n" + item.content
 
             primary.metadata["merged_sources"] = list(all_sources)
+            if supporting:
+                primary.metadata["supporting_sources"] = supporting
             merged.append(primary)
 
         return merged
@@ -430,6 +552,15 @@ class HorizonOrchestrator:
                 if dup_idx == primary_idx:
                     continue
                 dup = items[dup_idx]
+                primary.metadata.setdefault("supporting_sources", [])
+                primary.metadata["supporting_sources"].append({
+                    "source_name": dup.metadata.get("source_name", dup.source_type.value),
+                    "source_url": str(dup.url),
+                    "source_role": dup.metadata.get("source_role", "unclassified"),
+                    "source_reliability_tier": dup.metadata.get("source_reliability_tier", "unknown"),
+                    "publication_date": dup.metadata.get("publication_date"),
+                    "title": dup.title,
+                })
                 # Merge comments/content from the duplicate into the primary
                 if dup.content:
                     if not primary.content or dup.content not in primary.content:
@@ -490,7 +621,7 @@ class HorizonOrchestrator:
             f"   Re-analyzing {len(expanded)} Twitter items with reply context...\n"
         )
         ai_client = create_ai_client(self.config.ai)
-        analyzer = ContentAnalyzer(ai_client)
+        analyzer = ContentAnalyzer(ai_client, personal_briefing_mode=self.config.personal_briefing.enabled)
         await analyzer.analyze_batch(expanded)
 
     async def _enrich_important_items(self, items: List[ContentItem]) -> None:
@@ -523,7 +654,7 @@ class HorizonOrchestrator:
         self.console.print("🤖 Analyzing content with AI...")
 
         ai_client = create_ai_client(self.config.ai)
-        analyzer = ContentAnalyzer(ai_client)
+        analyzer = ContentAnalyzer(ai_client, personal_briefing_mode=self.config.personal_briefing.enabled)
 
         return await analyzer.analyze_batch(items)
 

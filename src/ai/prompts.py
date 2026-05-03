@@ -170,3 +170,44 @@ Respond with valid JSON only. Each _en field must be in English; each _zh field 
   "community_discussion_zh": "<用中文写1-3句话，或空字符串>",
   "sources": ["<url from search results>", "..."]
 }}"""
+
+PERSONAL_BRIEFING_ANALYSIS_SYSTEM = """You are an evidence-aware editor for a Russian briefing. Return valid JSON only."""
+
+PERSONAL_BRIEFING_ANALYSIS_USER = """Оцени новость для персонального briefing на русском языке.
+Правила редакционной оценки:
+- Разделяй подтвержденный факт, заявление стороны, анализ и рыночную реакцию.
+- Не считай заявления правительства/компании/военных/соцсетей независимым подтверждением.
+- Соцсети не являются фактическим подтверждением.
+- Не создавай ложный баланс при неравной силе доказательств.
+- Штрафуй обычную криминальную хронику, вирусный outrage, gore, celebrity, partisan opinion.
+- Поощряй законы/суды/ЦБ/санкции/рынки/Россия-Москва/AI/open-source/BigTech regulation/крупную науку.
+- unclassified и blocked источники не могут быть confirmed_fact.
+
+Верни JSON:
+{{
+  "importance": 7,
+  "include": true,
+  "topic": "world_economy",
+  "claim_type": "confirmed_fact",
+  "sensitive_topic": false,
+  "evidence_strength": "high",
+  "confidence": "medium",
+  "summary": "Краткое фактическое резюме на русском языке.",
+  "confirmed_details": ["Деталь 1", "Деталь 2"],
+  "who_claims": ["Регулятор", "Компания"],
+  "why_it_matters": "Кратко объясни, почему это важно.",
+  "source_policy_notes": "",
+  "requires_deep_review": false,
+  "noise_penalty": 1,
+  "weak_evidence_penalty": 1,
+  "reason": "Короткая причина оценки"
+}}
+
+Title: {title}
+Source: {source}
+Author: {author}
+URL: {url}
+Published: {published_at}
+Content: {content}
+Metadata: {metadata}
+"""

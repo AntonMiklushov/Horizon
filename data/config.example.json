@@ -76,7 +76,10 @@
     },
     "twitter": {
       "enabled": false,
-      "users": ["karpathy", "ylecun"],
+      "users": [
+        "karpathy",
+        "ylecun"
+      ],
       "fetch_limit": 10,
       "fetch_reply_text": false,
       "max_replies_per_tweet": 3,
@@ -129,5 +132,20 @@
       }
     },
     "headers": ""
+  },
+  "personal_briefing": {
+    "enabled": false,
+    "language": "ru",
+    "timezone": "Europe/Paris",
+    "daily_empty_allowed": true,
+    "min_importance": 7.0,
+    "min_importance_priority_topics": 6.5,
+    "require_dates": true,
+    "source_policy_file": "data/config.personal-news.example.json",
+    "critic_pass": {
+      "enabled": true,
+      "auto_revise_once": true
+    },
+    "generate_standard_summaries": false
   }
 }

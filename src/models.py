@@ -25,7 +25,7 @@ class ContentItem(BaseModel):
     url: HttpUrl
     content: Optional[str] = None
     author: Optional[str] = None
-    published_at: datetime
+    published_at: Optional[datetime] = None
     fetched_at: datetime = Field(default_factory=datetime.utcnow)
     metadata: Dict[str, Any] = Field(default_factory=dict)
 
@@ -185,6 +185,24 @@ class FilteringConfig(BaseModel):
     time_window_hours: int = 24
 
 
+class PersonalBriefingCriticConfig(BaseModel):
+    enabled: bool = True
+    auto_revise_once: bool = True
+
+
+class PersonalBriefingConfig(BaseModel):
+    enabled: bool = False
+    generate_standard_summaries: bool = False
+    language: str = "ru"
+    timezone: str = "Europe/Paris"
+    daily_empty_allowed: bool = True
+    min_importance: float = 7.0
+    min_importance_priority_topics: float = 6.5
+    require_dates: bool = True
+    source_policy_file: str = "data/config.personal-news.example.json"
+    critic_pass: PersonalBriefingCriticConfig = Field(default_factory=PersonalBriefingCriticConfig)
+
+
 class Config(BaseModel):
     """Main configuration model."""
 
@@ -194,3 +212,4 @@ class Config(BaseModel):
     filtering: FilteringConfig
     email: Optional[EmailConfig] = None
     webhook: Optional[WebhookConfig] = None
+    personal_briefing: PersonalBriefingConfig = Field(default_factory=PersonalBriefingConfig)

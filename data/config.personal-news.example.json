@@ -1,0 +1,32 @@
+{
+  "default_language": "ru",
+  "timezone": "Europe/Paris",
+  "allowed_social_primary_actors": [
+    "elonmusk",
+    "openai",
+    "sama",
+    "github",
+    "federalreserve",
+    "ecb",
+    "potus"
+  ],
+  "source_domain_rules": {
+    "reuters.com": {"role": "fact_layer", "tier": "tier1", "name": "Reuters"},
+    "apnews.com": {"role": "fact_layer", "tier": "tier1", "name": "Associated Press"},
+    "ft.com": {"role": "context_layer", "tier": "tier1", "name": "Financial Times"},
+    "economist.com": {"role": "context_layer", "tier": "tier1", "name": "The Economist"},
+    "interfax.ru": {"role": "russian_institutional_frame", "tier": "tier2", "name": "Interfax"},
+    "kommersant.ru": {"role": "russian_institutional_frame", "tier": "tier2", "name": "Kommersant"},
+    "rbc.ru": {"role": "russian_institutional_frame", "tier": "tier2", "name": "RBC"},
+    "mos.ru": {"role": "official_primary_source", "tier": "tier2", "name": "mos.ru"},
+    "nature.com": {"role": "science_primary_source", "tier": "tier1", "name": "Nature"},
+    "science.org": {"role": "science_primary_source", "tier": "tier1", "name": "Science"},
+    "arxiv.org": {"role": "science_preprint", "tier": "tier2", "name": "arXiv"},
+    "github.com": {"role": "tech_primary_source", "tier": "tier2", "name": "GitHub"},
+    "x.com": {"role": "social_primary_statement_only", "tier": "unknown", "name": "X"},
+    "twitter.com": {"role": "social_primary_statement_only", "tier": "unknown", "name": "Twitter/X"},
+    "t.me": {"role": "blocked_as_fact_source", "tier": "unknown", "name": "Telegram"},
+    "reddit.com": {"role": "blocked_as_fact_source", "tier": "unknown", "name": "Reddit"},
+    "news.ycombinator.com": {"role": "blocked_as_fact_source", "tier": "unknown", "name": "Hacker News"}
+  }
+}

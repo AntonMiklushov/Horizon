@@ -320,3 +320,5 @@ Great candidates: niche RSS discoveries, active subreddit trends, notable GitHub
 ## License
 
 [MIT](LICENSE)
+
+Personal evidence-aware briefing mode - see `docs/personal_briefing.md`.

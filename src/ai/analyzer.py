@@ -8,7 +8,7 @@ from tenacity import retry, stop_after_attempt, wait_exponential
 from rich.progress import Progress, SpinnerColumn, BarColumn, TextColumn, MofNCompleteColumn
 
 from .client import AIClient
-from .prompts import CONTENT_ANALYSIS_SYSTEM, CONTENT_ANALYSIS_USER
+from .prompts import CONTENT_ANALYSIS_SYSTEM, CONTENT_ANALYSIS_USER, PERSONAL_BRIEFING_ANALYSIS_SYSTEM, PERSONAL_BRIEFING_ANALYSIS_USER
 from .utils import parse_json_response
 from ..models import ContentItem
 
@@ -18,8 +18,9 @@ DEFAULT_THROTTLE_SEC = 0.0
 class ContentAnalyzer:
     """Analyzes content items using AI to determine importance."""
 
-    def __init__(self, ai_client: AIClient):
+    def __init__(self, ai_client: AIClient, personal_briefing_mode: bool = False):
         self.client = ai_client
+        self.personal_briefing_mode = personal_briefing_mode
 
     @staticmethod
     def _parse_json_response(response: str) -> Optional[dict]:
@@ -119,18 +120,22 @@ class ContentAnalyzer:
         discussion_section = "\n".join(discussion_parts) if discussion_parts else ""
 
         # Generate user prompt
-        user_prompt = CONTENT_ANALYSIS_USER.format(
+        prompt_tpl = PERSONAL_BRIEFING_ANALYSIS_USER if self.personal_briefing_mode else CONTENT_ANALYSIS_USER
+        user_prompt = prompt_tpl.format(
             title=item.title,
             source=f"{item.source_type.value}",
             author=item.author or "Unknown",
             url=str(item.url),
             content_section=content_section,
-            discussion_section=discussion_section
+            discussion_section=discussion_section,
+            published_at=item.published_at.isoformat() if item.published_at else "",
+            metadata=json.dumps(item.metadata, ensure_ascii=False)[:1000],
+            content=(item.content or "")[:1000]
         )
 
         # Get AI completion
         response = await self.client.complete(
-            system=CONTENT_ANALYSIS_SYSTEM,
+            system=PERSONAL_BRIEFING_ANALYSIS_SYSTEM if self.personal_briefing_mode else CONTENT_ANALYSIS_SYSTEM,
             user=user_prompt,
         )
 
@@ -145,7 +150,10 @@ class ContentAnalyzer:
             return
 
         # Update item with analysis results
-        item.ai_score = float(result.get("score", 0))
+        item.ai_score = float(result.get("score", result.get("importance", 0)))
         item.ai_reason = result.get("reason", "")
         item.ai_summary = result.get("summary", item.title)
         item.ai_tags = result.get("tags", [])
+        for k in ["evidence_strength","confidence","include","topic","claim_type","sensitive_topic","requires_deep_review","noise_penalty","weak_evidence_penalty","source_policy_notes","confirmed_details","who_claims","why_it_matters","summary"]:
+            if k in result:
+                item.metadata[k]=result[k]
