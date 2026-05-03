@@ -60,9 +60,10 @@ def configure_ai() -> Optional[AIConfig]:
         default="openai",
     )
 
-    model = Prompt.ask("Model name", default="deepseek-chat" if provider == "openai" else "")
+    default_model = "codex-cli" if provider == "codex_cli" else ("deepseek-chat" if provider == "openai" else "")
+    model = Prompt.ask("Model name", default=default_model)
 
-    base_url = Prompt.ask("Base URL (leave empty for default)", default="")
+    base_url = None if provider == "codex_cli" else Prompt.ask("Base URL (leave empty for default)", default="")
 
     # Determine default env var name
     default_env = {
@@ -73,18 +74,22 @@ def configure_ai() -> Optional[AIConfig]:
         "doubao": "DOUBAO_API_KEY",
         "minimax": "MINIMAX_API_KEY",
     }
-    api_key_env = Prompt.ask(
-        "API key environment variable name",
-        default=default_env.get(provider, "API_KEY"),
-    )
-
-    # Check if the key is actually set
-    if not os.getenv(api_key_env):
-        console.print(
-            f"[yellow]⚠  {api_key_env} is not set in environment or .env file.[/yellow]"
+    api_key_env = None
+    if provider != "codex_cli":
+        api_key_env = Prompt.ask(
+            "API key environment variable name",
+            default=default_env.get(provider, "API_KEY"),
         )
-        console.print("   AI features (smart recommendations) will be skipped.")
-        console.print(f"   Add it to your .env file later: {api_key_env}=your_key_here\n")
+
+        # Check if the key is actually set
+        if not os.getenv(api_key_env):
+            console.print(
+                f"[yellow]⚠  {api_key_env} is not set in environment or .env file.[/yellow]"
+            )
+            console.print("   AI features (smart recommendations) will be skipped.")
+            console.print(f"   Add it to your .env file later: {api_key_env}=your_key_here\n")
+    else:
+        console.print("[dim]Codex CLI uses your local `codex login` session; no API key is required.[/dim]\n")
 
     languages = Prompt.ask(
         "Output languages (comma-separated)",
@@ -100,6 +105,15 @@ def configure_ai() -> Optional[AIConfig]:
         temperature=0.3,
         max_tokens=8192,
         languages=lang_list,
+        codex_extra_args=(
+            [
+                "--skip-git-repo-check",
+                "-c",
+                'model_reasoning_effort="medium"',
+            ]
+            if provider == "codex_cli"
+            else []
+        ),
     )
 
 
@@ -384,7 +398,10 @@ def main():
 
     # Step 4: AI recommendations (optional)
     ai_sources = []
-    ai_available = bool(os.getenv(ai_config.api_key_env))
+    ai_available = (
+        ai_config.provider == AIProvider.CODEX_CLI
+        or bool(ai_config.api_key_env and os.getenv(ai_config.api_key_env))
+    )
 
     if ai_available:
         if Confirm.ask("\nAsk AI for additional source recommendations?", default=True):
@@ -397,8 +414,9 @@ def main():
             else:
                 console.print("[yellow]AI returned no additional recommendations.[/yellow]")
     else:
+        api_key_label = ai_config.api_key_env or "API key"
         console.print(
-            f"\n[dim]Skipping AI recommendations ({ai_config.api_key_env} not set)[/dim]"
+            f"\n[dim]Skipping AI recommendations ({api_key_label} not set)[/dim]"
         )
 
     # Step 5: Interactive source selection

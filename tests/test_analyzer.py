@@ -1,10 +1,11 @@
 import asyncio
+import json
 from datetime import datetime, timezone
 from types import SimpleNamespace
 
 import src.ai.analyzer as analyzer_module
 from src.ai.analyzer import ContentAnalyzer
-from src.models import ContentItem, SourceType
+from src.models import AIProvider, ContentItem, SourceType
 
 
 def _make_item(item_id: str) -> ContentItem:
@@ -55,3 +56,62 @@ def test_analyze_batch_sleeps_between_items_when_throttle_configured(monkeypatch
     asyncio.run(analyzer.analyze_batch(items))
 
     assert sleep_calls == [1.5, 1.5]
+
+
+def test_codex_cli_analyze_batch_uses_single_batch_completion():
+    calls = []
+
+    class FakeCodexClient:
+        config = SimpleNamespace(provider=AIProvider.CODEX_CLI, throttle_sec=0.0)
+
+        async def complete(self, system, user):
+            calls.append((system, user))
+            payload = json.loads(user.split("Items:\n", 1)[1])
+            return json.dumps({
+                "items": [
+                    {
+                        "id": item["id"],
+                        "score": 8,
+                        "reason": "important",
+                        "summary": f"summary {item['id']}",
+                        "tags": ["test"],
+                    }
+                    for item in payload
+                ]
+            })
+
+    analyzer = ContentAnalyzer(FakeCodexClient())
+    items = [_make_item("rss:test:1"), _make_item("rss:test:2")]
+
+    result = asyncio.run(analyzer.analyze_batch(items))
+
+    assert len(calls) == 1
+    assert result[0].ai_score == 8
+    assert result[1].ai_summary == "summary rss:test:2"
+
+
+def test_codex_cli_batch_failure_falls_back_to_item_analysis(monkeypatch):
+    class FakeCodexClient:
+        config = SimpleNamespace(provider=AIProvider.CODEX_CLI, throttle_sec=0.0)
+
+        async def complete(self, system, user):
+            raise AssertionError("batch call is monkeypatched below")
+
+    analyzer = ContentAnalyzer(FakeCodexClient())
+    items = [_make_item("rss:test:1"), _make_item("rss:test:2")]
+    fallback_calls = []
+
+    async def fake_analyze_item_chunk(chunk):
+        raise ValueError("batch failed")
+
+    async def fake_analyze_item(item):
+        fallback_calls.append(item.id)
+        item.ai_score = 7.0
+
+    monkeypatch.setattr(analyzer, "_analyze_item_chunk", fake_analyze_item_chunk)
+    monkeypatch.setattr(analyzer, "_analyze_item", fake_analyze_item)
+
+    result = asyncio.run(analyzer.analyze_batch(items))
+
+    assert fallback_calls == ["rss:test:1", "rss:test:2"]
+    assert [item.ai_score for item in result] == [7.0, 7.0]

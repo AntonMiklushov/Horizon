@@ -10,9 +10,10 @@ from rich.progress import Progress, SpinnerColumn, BarColumn, TextColumn, MofNCo
 from .client import AIClient
 from .prompts import CONTENT_ANALYSIS_SYSTEM, CONTENT_ANALYSIS_USER, PERSONAL_BRIEFING_ANALYSIS_SYSTEM, PERSONAL_BRIEFING_ANALYSIS_USER
 from .utils import parse_json_response
-from ..models import ContentItem
+from ..models import AIProvider, ContentItem
 
 DEFAULT_THROTTLE_SEC = 0.0
+CODEX_BATCH_CHAR_BUDGET = 50000
 
 
 class ContentAnalyzer:
@@ -37,6 +38,9 @@ class ContentAnalyzer:
         return max(throttle_sec, 0.0)
 
     async def analyze_batch(self, items: List[ContentItem]) -> List[ContentItem]:
+        if self._should_use_batch_analysis(items):
+            return await self._analyze_batch_with_codex(items)
+
         throttle_sec = self._get_throttle_sec()
         analyzed_items = []
 
@@ -64,6 +68,167 @@ class ContentAnalyzer:
                     await asyncio.sleep(throttle_sec)
 
         return analyzed_items
+
+    def _should_use_batch_analysis(self, items: List[ContentItem]) -> bool:
+        config = getattr(self.client, "config", None)
+        provider = getattr(config, "provider", None)
+        return bool(
+            items
+            and (provider == AIProvider.CODEX_CLI or str(provider) == AIProvider.CODEX_CLI.value)
+        )
+
+    async def _analyze_batch_with_codex(self, items: List[ContentItem]) -> List[ContentItem]:
+        analyzed_items: List[ContentItem] = []
+        chunks = list(self._chunk_items_for_codex(items))
+        throttle_sec = self._get_throttle_sec()
+
+        with Progress(
+            SpinnerColumn(),
+            TextColumn("[progress.description]{task.description}"),
+            BarColumn(),
+            MofNCompleteColumn(),
+            transient=True,
+        ) as progress:
+            task = progress.add_task("Analyzing", total=len(items))
+
+            for index, chunk in enumerate(chunks):
+                try:
+                    await self._analyze_item_chunk(chunk)
+                except Exception as e:
+                    print(f"Error analyzing Codex batch of {len(chunk)} items: {e}")
+                    await self._analyze_chunk_individually(chunk)
+                analyzed_items.extend(chunk)
+                progress.advance(task, len(chunk))
+                if throttle_sec > 0 and index < len(chunks) - 1:
+                    await asyncio.sleep(throttle_sec)
+
+        return analyzed_items
+
+    def _chunk_items_for_codex(self, items: List[ContentItem]) -> List[List[ContentItem]]:
+        chunks: List[List[ContentItem]] = []
+        current: List[ContentItem] = []
+        current_size = 0
+
+        for item in items:
+            item_size = len(json.dumps(self._item_payload(item), ensure_ascii=False))
+            if current and current_size + item_size > CODEX_BATCH_CHAR_BUDGET:
+                chunks.append(current)
+                current = []
+                current_size = 0
+            current.append(item)
+            current_size += item_size
+
+        if current:
+            chunks.append(current)
+        return chunks
+
+    async def _analyze_chunk_individually(self, items: List[ContentItem]) -> None:
+        for item in items:
+            try:
+                await self._analyze_item(item)
+            except Exception as e:
+                print(f"Error analyzing item {item.id}: {e}")
+                self._apply_analysis_failure(item, "Analysis failed")
+
+    @retry(
+        stop=stop_after_attempt(3),
+        wait=wait_exponential(min=2, max=10)
+    )
+    async def _analyze_item_chunk(self, items: List[ContentItem]) -> None:
+        response = await self.client.complete(
+            system=PERSONAL_BRIEFING_ANALYSIS_SYSTEM if self.personal_briefing_mode else CONTENT_ANALYSIS_SYSTEM,
+            user=self._build_batch_prompt(items),
+        )
+        result = self._parse_json_response(response)
+        if result is None:
+            raise ValueError("could not parse batch analysis response")
+
+        raw_results = result.get("items")
+        if not isinstance(raw_results, list):
+            raise ValueError("batch analysis response must contain an items list")
+
+        by_id = {
+            str(item_result.get("id")): item_result
+            for item_result in raw_results
+            if isinstance(item_result, dict) and item_result.get("id")
+        }
+        for item in items:
+            item_result = by_id.get(item.id)
+            if item_result is None:
+                self._apply_analysis_failure(item, "Batch analysis omitted item")
+                continue
+            self._apply_analysis_result(item, item_result)
+
+    def _build_batch_prompt(self, items: List[ContentItem]) -> str:
+        payload = [self._item_payload(item) for item in items]
+        if self.personal_briefing_mode:
+            schema = {
+                "items": [{
+                    "id": "<item id>",
+                    "importance": 7,
+                    "include": True,
+                    "topic": "world_economy",
+                    "claim_type": "confirmed_fact",
+                    "sensitive_topic": False,
+                    "evidence_strength": "high",
+                    "confidence": "medium",
+                    "summary": "<short factual summary in Russian>",
+                    "confirmed_details": ["<detail 1>", "<detail 2>"],
+                    "who_claims": ["<actor 1>", "<actor 2>"],
+                    "why_it_matters": "<why this matters in Russian>",
+                    "source_policy_notes": "",
+                    "requires_deep_review": False,
+                    "noise_penalty": 1,
+                    "weak_evidence_penalty": 1,
+                    "reason": "<brief reason in Russian>",
+                }]
+            }
+            instruction = (
+                "Analyze each item independently for the Russian personal briefing. "
+                "Return one JSON object without Markdown. The items array must contain "
+                "exactly one Russian-language result for each input id."
+            )
+        else:
+            schema = {
+                "items": [{
+                    "id": "<item id>",
+                    "score": 7,
+                    "reason": "<brief explanation>",
+                    "summary": "<one-sentence-summary>",
+                    "tags": ["<tag1>", "<tag2>"],
+                }]
+            }
+            instruction = (
+                "Analyze each item independently. Return one JSON object without Markdown. "
+                "The items array must contain exactly one result for each input id."
+            )
+
+        return (
+            f"{instruction}\n\n"
+            f"Expected response shape:\n{json.dumps(schema, ensure_ascii=False, indent=2)}\n\n"
+            f"Items:\n{json.dumps(payload, ensure_ascii=False, indent=2)}"
+        )
+
+    def _item_payload(self, item: ContentItem) -> dict:
+        content_section = ""
+        if item.content:
+            content_section = item.content[:1000]
+
+        discussion_section = ""
+        if item.content and "--- Top Comments ---" in item.content:
+            discussion_section = item.content.split("--- Top Comments ---", 1)[1][:1500]
+
+        return {
+            "id": item.id,
+            "title": item.title,
+            "source": item.source_type.value,
+            "author": item.author or "Unknown",
+            "url": str(item.url),
+            "published_at": item.published_at.isoformat() if item.published_at else "",
+            "content": content_section,
+            "discussion": discussion_section,
+            "metadata": item.metadata,
+        }
 
     @retry(
         stop=stop_after_attempt(3),
@@ -143,13 +308,21 @@ class ContentAnalyzer:
         result = self._parse_json_response(response)
         if result is None:
             print(f"Warning: could not parse analysis response for {item.id}, using defaults")
-            item.ai_score = 0.0
-            item.ai_reason = "Analysis response parse failed"
-            item.ai_summary = item.title
-            item.ai_tags = []
+            self._apply_analysis_failure(item, "Analysis response parse failed")
             return
 
-        # Update item with analysis results
+        self._apply_analysis_result(item, result)
+
+    @staticmethod
+    def _apply_analysis_failure(item: ContentItem, reason: str) -> None:
+        item.ai_score = 0.0
+        item.ai_reason = reason
+        item.ai_summary = item.title
+        item.ai_tags = []
+
+    @staticmethod
+    def _apply_analysis_result(item: ContentItem, result: dict) -> None:
+        """Update an item from a single-item or batched analysis result."""
         item.ai_score = float(result.get("score", result.get("importance", 0)))
         item.ai_reason = result.get("reason", "")
         item.ai_summary = result.get("summary", item.title)

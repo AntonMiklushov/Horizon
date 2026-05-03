@@ -8,6 +8,20 @@
     "max_tokens": 4096,
     "throttle_sec": 0
   },
+  "codex_cli_provider_example": {
+    "provider": "codex_cli",
+    "model": "codex-cli",
+    "languages": ["ru"],
+    "codex_command": "codex",
+    "codex_timeout_sec": 180,
+    "codex_extra_args": [
+      "--skip-git-repo-check",
+      "-c",
+      "model_reasoning_effort=\"medium\""
+    ],
+    "codex_use_output_last_message": true,
+    "codex_use_json": false
+  },
   "email": {
     "enabled": false,
     "smtp_server": "smtp.qq.com",

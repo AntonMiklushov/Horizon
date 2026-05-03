@@ -44,6 +44,7 @@ class AIProvider(str, Enum):
     GEMINI = "gemini"
     DOUBAO = "doubao"
     MINIMAX = "minimax"
+    CODEX_CLI = "codex_cli"
 
 
 class AIConfig(BaseModel):
@@ -52,11 +53,16 @@ class AIConfig(BaseModel):
     provider: AIProvider
     model: str
     base_url: Optional[str] = None
-    api_key_env: str
+    api_key_env: Optional[str] = None
     temperature: float = 0.3
     max_tokens: int = 4096
     throttle_sec: float = 0.0
     languages: List[str] = Field(default_factory=lambda: ["en"])
+    codex_command: str = "codex"
+    codex_timeout_sec: int = 180
+    codex_extra_args: List[str] = Field(default_factory=list)
+    codex_use_output_last_message: bool = True
+    codex_use_json: bool = False
 
 
 class GitHubSourceConfig(BaseModel):

@@ -24,6 +24,7 @@ from .horizon_adapter import (
 )
 from .run_store import RunStore
 from ..services.webhook import WebhookNotifier
+from ..models import AIProvider
 
 
 def _default_runs_root() -> Path:
@@ -175,7 +176,9 @@ class HorizonPipelineService:
         missing_env: list[str] = []
 
         if check_env:
-            required = [ctx.config.ai.api_key_env]
+            required = []
+            if ctx.config.ai.provider != AIProvider.CODEX_CLI and ctx.config.ai.api_key_env:
+                required.append(ctx.config.ai.api_key_env)
             for key in required:
                 if not os.getenv(key):
                     missing_env.append(key)
