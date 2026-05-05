@@ -1,5 +1,6 @@
 """Unit tests for daily summary rendering."""
 
+import asyncio
 from datetime import datetime, timezone
 
 from src.ai.summarizer import DailySummarizer
@@ -53,3 +54,32 @@ def test_generate_webhook_item_renders_single_item_detail():
     assert "## [Important Item 1](https://example.com/items/1)" in result
     assert "Summary for item 1." in result
     assert "**Tags**: `#AI`, `#News`" in result
+
+
+def test_generate_summary_supports_russian_labels():
+    summarizer = DailySummarizer()
+
+    result = asyncio.run(
+        summarizer.generate_summary(
+            [_make_item(1)],
+            date="2026-04-25",
+            total_fetched=10,
+            language="ru",
+        )
+    )
+
+    assert result.startswith("# Ежедневная сводка Horizon")
+    assert "Из 10 материалов выбрано важных: 1" in result
+    assert "**Источник**" not in result
+    assert "**Теги**: `#AI`, `#News`" in result
+
+
+def test_generate_empty_summary_supports_russian_labels():
+    summarizer = DailySummarizer()
+
+    result = asyncio.run(
+        summarizer.generate_summary([], date="2026-04-25", total_fetched=10, language="ru")
+    )
+
+    assert "Проанализировано материалов: 10" in result
+    assert "Сегодня нет значимых событий" in result

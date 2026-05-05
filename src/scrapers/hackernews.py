@@ -14,6 +14,14 @@ logger = logging.getLogger(__name__)
 
 # Max top-level comments to fetch per story
 TOP_COMMENTS_LIMIT = 5
+HN_LIST_ENDPOINTS = {
+    "top": "topstories",
+    "new": "newstories",
+    "best": "beststories",
+    "ask": "askstories",
+    "show": "showstories",
+    "job": "jobstories",
+}
 
 
 class HackerNewsScraper(BaseScraper):
@@ -28,12 +36,20 @@ class HackerNewsScraper(BaseScraper):
             return []
 
         try:
-            response = await self.client.get(f"{self.base_url}/topstories.json")
-            response.raise_for_status()
-            story_ids = response.json()
-
             fetch_count = self.config.get("fetch_top_stories", 30)
-            story_ids = story_ids[:fetch_count]
+            story_lists = self.config.get("story_lists") or ["top"]
+            story_ids = []
+            seen_ids = set()
+            for story_list in story_lists:
+                endpoint = HN_LIST_ENDPOINTS.get(story_list)
+                if not endpoint:
+                    continue
+                response = await self.client.get(f"{self.base_url}/{endpoint}.json")
+                response.raise_for_status()
+                for story_id in response.json()[:fetch_count]:
+                    if story_id not in seen_ids:
+                        story_ids.append(story_id)
+                        seen_ids.add(story_id)
 
             # Fetch story details concurrently
             tasks = [self._fetch_story(story_id) for story_id in story_ids]
@@ -48,6 +64,10 @@ class HackerNewsScraper(BaseScraper):
 
             for story in stories:
                 if isinstance(story, Exception) or story is None:
+                    continue
+                if story.get("type") == "job" and not self.config.get("include_jobs", False):
+                    continue
+                if story.get("type") not in {"story", "job"}:
                     continue
                 if story.get("score", 0) < min_score:
                     continue

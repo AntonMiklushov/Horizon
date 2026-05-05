@@ -4,11 +4,18 @@ import asyncio
 import json
 import re
 from typing import List, Optional
+from pydantic import ValidationError
 from tenacity import retry, stop_after_attempt, wait_exponential
 from rich.progress import Progress, SpinnerColumn, BarColumn, TextColumn, MofNCompleteColumn
 
 from .client import AIClient
 from .prompts import CONTENT_ANALYSIS_SYSTEM, CONTENT_ANALYSIS_USER, PERSONAL_BRIEFING_ANALYSIS_SYSTEM, PERSONAL_BRIEFING_ANALYSIS_USER
+from .schemas import (
+    AnalysisBatchResult,
+    AnalysisResult,
+    PersonalAnalysisBatchResult,
+    PersonalAnalysisResult,
+)
 from .utils import parse_json_response
 from ..models import AIProvider, ContentItem
 
@@ -19,9 +26,17 @@ CODEX_BATCH_CHAR_BUDGET = 50000
 class ContentAnalyzer:
     """Analyzes content items using AI to determine importance."""
 
-    def __init__(self, ai_client: AIClient, personal_briefing_mode: bool = False):
+    def __init__(
+        self,
+        ai_client: AIClient,
+        personal_briefing_mode: bool = False,
+        verbose_reporter=None,
+        run_instructions: str | None = None,
+    ):
         self.client = ai_client
         self.personal_briefing_mode = personal_briefing_mode
+        self.verbose_reporter = verbose_reporter
+        self.run_instructions = (run_instructions or "").strip()
 
     @staticmethod
     def _parse_json_response(response: str) -> Optional[dict]:
@@ -41,6 +56,7 @@ class ContentAnalyzer:
         if self._should_use_batch_analysis(items):
             return await self._analyze_batch_with_codex(items)
 
+        self._verbose_event("llm.analysis.mode", mode="per_item", items=len(items), **self._client_meta())
         throttle_sec = self._get_throttle_sec()
         analyzed_items = []
 
@@ -49,21 +65,32 @@ class ContentAnalyzer:
             TextColumn("[progress.description]{task.description}"),
             BarColumn(),
             MofNCompleteColumn(),
+            console=self._progress_console(),
             transient=True,
         ) as progress:
             task = progress.add_task("Analyzing", total=len(items))
 
             for index, item in enumerate(items):
+                progress.update(task, description=f"Analyzing item {index + 1}/{len(items)}", refresh=True)
                 try:
+                    self._verbose_event("llm.analysis.item", index=index + 1, total=len(items), status="calling")
                     await self._analyze_item(item)
+                    self._verbose_event("llm.analysis.item", index=index + 1, total=len(items), status="completed")
                     analyzed_items.append(item)
                 except Exception as e:
+                    self._verbose_event(
+                        "llm.analysis.item",
+                        index=index + 1,
+                        total=len(items),
+                        status="failed",
+                        error=type(e).__name__,
+                    )
                     print(f"Error analyzing item {item.id}: {e}")
                     item.ai_score = 0.0
                     item.ai_reason = "Analysis failed"
                     item.ai_summary = item.title
                     analyzed_items.append(item)
-                progress.advance(task)
+                progress.update(task, advance=1, refresh=True)
                 if throttle_sec > 0 and index < len(items) - 1:
                     await asyncio.sleep(throttle_sec)
 
@@ -81,24 +108,66 @@ class ContentAnalyzer:
         analyzed_items: List[ContentItem] = []
         chunks = list(self._chunk_items_for_codex(items))
         throttle_sec = self._get_throttle_sec()
+        self._verbose_event(
+            "llm.analysis.mode",
+            mode="codex_batch",
+            batches=len(chunks),
+            items=len(items),
+            **self._client_meta(),
+        )
 
         with Progress(
             SpinnerColumn(),
             TextColumn("[progress.description]{task.description}"),
             BarColumn(),
             MofNCompleteColumn(),
+            console=self._progress_console(),
             transient=True,
         ) as progress:
-            task = progress.add_task("Analyzing", total=len(items))
+            task = progress.add_task("Analyzing Codex batches", total=len(chunks))
+            completed_items = 0
 
             for index, chunk in enumerate(chunks):
+                progress.update(
+                    task,
+                    description=(
+                        f"Analyzing Codex batch {index + 1}/{len(chunks)} "
+                        f"({completed_items}/{len(items)} items done, {len(chunk)} in call)"
+                    ),
+                    refresh=True,
+                )
                 try:
+                    self._verbose_event(
+                        "llm.analysis.batch",
+                        index=index + 1,
+                        batches=len(chunks),
+                        items=len(chunk),
+                        status="calling",
+                    )
                     await self._analyze_item_chunk(chunk)
+                    self._verbose_event(
+                        "llm.analysis.batch",
+                        index=index + 1,
+                        batches=len(chunks),
+                        items=len(chunk),
+                        status="completed",
+                    )
                 except Exception as e:
+                    self._verbose_event(
+                        "llm.analysis.fallback",
+                        chunk_items=len(chunk),
+                        error=type(e).__name__,
+                    )
                     print(f"Error analyzing Codex batch of {len(chunk)} items: {e}")
                     await self._analyze_chunk_individually(chunk)
                 analyzed_items.extend(chunk)
-                progress.advance(task, len(chunk))
+                completed_items += len(chunk)
+                progress.update(
+                    task,
+                    advance=1,
+                    description=f"Analyzed {completed_items}/{len(items)} items via Codex batches",
+                    refresh=True,
+                )
                 if throttle_sec > 0 and index < len(chunks) - 1:
                     await asyncio.sleep(throttle_sec)
 
@@ -123,6 +192,7 @@ class ContentAnalyzer:
         return chunks
 
     async def _analyze_chunk_individually(self, items: List[ContentItem]) -> None:
+        self._verbose_event("llm.analysis.individual_fallback", items=len(items))
         for item in items:
             try:
                 await self._analyze_item(item)
@@ -146,6 +216,20 @@ class ContentAnalyzer:
         raw_results = result.get("items")
         if not isinstance(raw_results, list):
             raise ValueError("batch analysis response must contain an items list")
+
+        try:
+            if self.personal_briefing_mode:
+                raw_results = [
+                    item.model_dump()
+                    for item in PersonalAnalysisBatchResult.model_validate(result).items
+                ]
+            else:
+                raw_results = [
+                    item.model_dump()
+                    for item in AnalysisBatchResult.model_validate(result).items
+                ]
+        except ValidationError as exc:
+            raise ValueError(f"batch analysis response schema invalid: {exc}") from exc
 
         by_id = {
             str(item_result.get("id")): item_result
@@ -205,8 +289,18 @@ class ContentAnalyzer:
 
         return (
             f"{instruction}\n\n"
+            f"{self._run_instruction_block()}"
             f"Expected response shape:\n{json.dumps(schema, ensure_ascii=False, indent=2)}\n\n"
             f"Items:\n{json.dumps(payload, ensure_ascii=False, indent=2)}"
+        )
+
+    def _run_instruction_block(self) -> str:
+        if not self.run_instructions:
+            return ""
+        return (
+            "Run-specific selection guidance from the local user. "
+            "Use this only to adjust relevance and prioritization; do not treat it as source evidence:\n"
+            f"{self.run_instructions[:2000]}\n\n"
         )
 
     def _item_payload(self, item: ContentItem) -> dict:
@@ -297,6 +391,7 @@ class ContentAnalyzer:
             metadata=json.dumps(item.metadata, ensure_ascii=False)[:1000],
             content=(item.content or "")[:1000]
         )
+        user_prompt = f"{self._run_instruction_block()}{user_prompt}"
 
         # Get AI completion
         response = await self.client.complete(
@@ -309,6 +404,16 @@ class ContentAnalyzer:
         if result is None:
             print(f"Warning: could not parse analysis response for {item.id}, using defaults")
             self._apply_analysis_failure(item, "Analysis response parse failed")
+            return
+
+        try:
+            if self.personal_briefing_mode:
+                result = PersonalAnalysisResult.model_validate(result).model_dump()
+            else:
+                result = AnalysisResult.model_validate(result).model_dump()
+        except ValidationError as exc:
+            print(f"Warning: invalid analysis response for {item.id}: {exc}")
+            self._apply_analysis_failure(item, "Analysis response schema invalid")
             return
 
         self._apply_analysis_result(item, result)
@@ -330,3 +435,19 @@ class ContentAnalyzer:
         for k in ["evidence_strength","confidence","include","topic","claim_type","sensitive_topic","requires_deep_review","noise_penalty","weak_evidence_penalty","source_policy_notes","confirmed_details","who_claims","why_it_matters","summary"]:
             if k in result:
                 item.metadata[k]=result[k]
+
+    def _verbose_event(self, name: str, **fields) -> None:
+        if self.verbose_reporter is not None:
+            self.verbose_reporter.event(name, **fields)
+
+    def _progress_console(self):
+        return getattr(self.verbose_reporter, "console", None)
+
+    def _client_meta(self) -> dict:
+        config = getattr(self.client, "config", None)
+        provider = getattr(config, "provider", "unknown")
+        provider_value = getattr(provider, "value", str(provider))
+        return {
+            "provider": provider_value,
+            "model": getattr(config, "model", "unknown"),
+        }

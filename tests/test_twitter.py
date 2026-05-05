@@ -114,8 +114,10 @@ def test_successful_fetch_returns_items(monkeypatch):
     monkeypatch.setenv("APIFY_TOKEN", "test_token")
     since = datetime.now(timezone.utc) - timedelta(hours=1)
     tweets = [_tweet("1"), _tweet("2", text="Another tweet")]
+    seen = []
 
     def handler(request: httpx.Request) -> httpx.Response:
+        seen.append(request)
         if "/runs" in request.url.path and request.method == "POST":
             return httpx.Response(200, json=_run_resp())
         if "/actor-runs/" in request.url.path:
@@ -130,6 +132,8 @@ def test_successful_fetch_returns_items(monkeypatch):
     asyncio.run(client.aclose())
 
     assert len(result) == 2
+    assert all("token=" not in str(request.url) for request in seen)
+    assert all(request.headers.get("authorization") == "Bearer test_token" for request in seen)
     assert result[0].source_type.value == "twitter"
     assert result[0].metadata["favorite_count"] == 10
 

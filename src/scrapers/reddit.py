@@ -2,6 +2,7 @@
 
 import asyncio
 import logging
+import os
 import re
 from datetime import datetime, timezone
 from typing import Any, List, Optional
@@ -14,13 +15,10 @@ from ..models import ContentItem, RedditConfig, RedditSubredditConfig, RedditUse
 logger = logging.getLogger(__name__)
 
 REDDIT_BASE = "https://www.reddit.com"
-USER_AGENT = (
-    "Mozilla/5.0 (Macintosh; Intel Mac OS X 10_15_7) "
-    "AppleWebKit/537.36 (KHTML, like Gecko) "
-    "Chrome/135.0.0.0 Safari/537.36"
-)
+REDDIT_OAUTH_BASE = "https://oauth.reddit.com"
+DEFAULT_USER_AGENT = "Horizon/0.1 (+https://github.com/thysrael/horizon; configure REDDIT_USER_AGENT)"
 REDDIT_HEADERS = {
-    "User-Agent": USER_AGENT,
+    "User-Agent": DEFAULT_USER_AGENT,
     "Accept": "application/json,text/plain,*/*",
     "Accept-Language": "en-US,en;q=0.9",
     "Referer": f"{REDDIT_BASE}/",
@@ -35,6 +33,7 @@ class RedditScraper(BaseScraper):
         super().__init__(config.model_dump(), http_client)
         self.reddit_config = config
         self._comment_semaphore = asyncio.Semaphore(MAX_COMMENT_CONCURRENCY)
+        self._access_token: str | None = None
 
     async def fetch(self, since: datetime) -> List[ContentItem]:
         if not self.config.get("enabled", True):
@@ -65,7 +64,7 @@ class RedditScraper(BaseScraper):
         if cfg.sort in ("top", "controversial"):
             params["t"] = cfg.time_filter
 
-        url = f"{REDDIT_BASE}/r/{cfg.subreddit}/{cfg.sort}.json"
+        url = await self._api_url(f"/r/{cfg.subreddit}/{cfg.sort}.json")
         data = await self._reddit_get(url, params)
         if not data:
             return []
@@ -78,7 +77,7 @@ class RedditScraper(BaseScraper):
 
     async def _fetch_user(self, cfg: RedditUserConfig, since: datetime) -> List[ContentItem]:
         params = {"limit": min(cfg.fetch_limit, 100), "sort": cfg.sort, "raw_json": 1}
-        url = f"{REDDIT_BASE}/user/{cfg.username}/submitted.json"
+        url = await self._api_url(f"/user/{cfg.username}/submitted.json")
         data = await self._reddit_get(url, params)
         if not data:
             return []
@@ -135,7 +134,7 @@ class RedditScraper(BaseScraper):
 
     async def _fetch_comments(self, subreddit: str, post_id: str) -> List[dict]:
         fetch_limit = self.reddit_config.fetch_comments
-        url = f"{REDDIT_BASE}/r/{subreddit}/comments/{post_id}.json"
+        url = await self._api_url(f"/r/{subreddit}/comments/{post_id}.json")
         params = {"limit": fetch_limit, "depth": 1, "sort": "top", "raw_json": 1}
 
         async with self._comment_semaphore:
@@ -212,7 +211,7 @@ class RedditScraper(BaseScraper):
             response = await self.client.get(
                 url,
                 params=params,
-                headers=REDDIT_HEADERS,
+                headers=await self._request_headers(),
                 follow_redirects=True,
             )
             if response.status_code == 429:
@@ -222,7 +221,7 @@ class RedditScraper(BaseScraper):
                 response = await self.client.get(
                     url,
                     params=params,
-                    headers=REDDIT_HEADERS,
+                    headers=await self._request_headers(),
                     follow_redirects=True,
                 )
             if response.status_code == 403 and "/comments/" in url:
@@ -233,3 +232,40 @@ class RedditScraper(BaseScraper):
         except httpx.HTTPError as e:
             logger.warning("Reddit request failed for %s: %s", url, e)
             return None
+
+    async def _api_url(self, path: str) -> str:
+        token = await self._get_access_token()
+        base = REDDIT_OAUTH_BASE if token else REDDIT_BASE
+        return f"{base}{path}"
+
+    async def _request_headers(self) -> dict[str, str]:
+        user_agent = os.getenv(self.reddit_config.user_agent_env) or self.reddit_config.user_agent
+        headers = {**REDDIT_HEADERS, "User-Agent": user_agent}
+        token = await self._get_access_token()
+        if token:
+            headers["Authorization"] = f"Bearer {token}"
+            headers.pop("Referer", None)
+        return headers
+
+    async def _get_access_token(self) -> str | None:
+        if self._access_token:
+            return self._access_token
+        client_id = os.getenv(self.reddit_config.client_id_env or "")
+        client_secret = os.getenv(self.reddit_config.client_secret_env or "")
+        if not client_id or not client_secret:
+            return None
+        try:
+            response = await self.client.post(
+                f"{REDDIT_BASE}/api/v1/access_token",
+                data={"grant_type": "client_credentials"},
+                auth=(client_id, client_secret),
+                headers={"User-Agent": os.getenv(self.reddit_config.user_agent_env) or self.reddit_config.user_agent},
+                timeout=30.0,
+            )
+            response.raise_for_status()
+            token = response.json().get("access_token")
+            if isinstance(token, str) and token:
+                self._access_token = token
+        except httpx.HTTPError as exc:
+            logger.warning("Reddit OAuth unavailable, falling back to public JSON: %s", exc)
+        return self._access_token

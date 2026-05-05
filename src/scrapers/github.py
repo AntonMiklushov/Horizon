@@ -34,6 +34,7 @@ class GitHubScraper(BaseScraper):
         """
         headers = {
             "Accept": "application/vnd.github.v3+json",
+            "X-GitHub-Api-Version": "2022-11-28",
             "User-Agent": "Horizon-Aggregator"
         }
         if self.token:
@@ -85,9 +86,7 @@ class GitHubScraper(BaseScraper):
         items = []
 
         try:
-            response = await self.client.get(url, headers=self._get_headers(), follow_redirects=True)
-            response.raise_for_status()
-            events = response.json()
+            events = await self._get_paginated(url, since, date_field="created_at")
 
             for event in events:
                 created_at = datetime.fromisoformat(
@@ -188,9 +187,7 @@ class GitHubScraper(BaseScraper):
         items = []
 
         try:
-            response = await self.client.get(url, headers=self._get_headers(), follow_redirects=True)
-            response.raise_for_status()
-            releases = response.json()
+            releases = await self._get_paginated(url, since, date_field="published_at")
 
             for release in releases:
                 published_at = datetime.fromisoformat(
@@ -220,3 +217,41 @@ class GitHubScraper(BaseScraper):
             logger.warning("Error fetching releases for %s/%s: %s", owner, repo, e)
 
         return items
+
+    async def _get_paginated(
+        self,
+        url: str,
+        since: datetime,
+        *,
+        date_field: str,
+        max_pages: int = 5,
+    ) -> list[dict]:
+        """Fetch recent GitHub list endpoints with bounded pagination."""
+
+        rows: list[dict] = []
+        for page in range(1, max_pages + 1):
+            response = await self.client.get(
+                url,
+                headers=self._get_headers(),
+                params={"per_page": 100, "page": page},
+                follow_redirects=True,
+            )
+            if response.status_code == 304:
+                break
+            response.raise_for_status()
+            page_rows = response.json()
+            if not isinstance(page_rows, list) or not page_rows:
+                break
+            rows.extend(page_rows)
+
+            dated_rows = [row for row in page_rows if row.get(date_field)]
+            if dated_rows:
+                newest_page_dates = [
+                    datetime.fromisoformat(str(row[date_field]).replace("Z", "+00:00"))
+                    for row in dated_rows
+                ]
+                if newest_page_dates and max(newest_page_dates) < since:
+                    break
+            if len(page_rows) < 100:
+                break
+        return rows

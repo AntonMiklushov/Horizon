@@ -31,23 +31,51 @@ def print_banner():
     console.print(banner)
 
 
+def build_parser() -> argparse.ArgumentParser:
+    """Build the CLI argument parser."""
+    parser = argparse.ArgumentParser(description="Horizon - AI-Driven Information Aggregation System")
+    parser.add_argument("--hours", type=int, help="Force fetch from last N hours")
+    parser.add_argument("--config", help="Path to config.json (defaults to data/config.json)")
+    parser.add_argument("--data-dir", help="Directory for runtime data and summaries")
+    parser.add_argument(
+        "-v",
+        "--verbose",
+        action="store_true",
+        help="Print detailed stage progress and counters without secrets or raw prompts",
+    )
+    parser.add_argument(
+        "--debug",
+        action="store_true",
+        help="Print full tracebacks for local debugging",
+    )
+    return parser
+
+
 def main():
     """Main CLI entry point."""
     print_banner()
 
-    parser = argparse.ArgumentParser(description="Horizon - AI-Driven Information Aggregation System")
-    parser.add_argument("--hours", type=int, help="Force fetch from last N hours")
+    parser = build_parser()
     args = parser.parse_args()
 
     try:
-        # Load environment variables from .env file
+        config_path = Path(args.config).expanduser().resolve() if args.config else None
+        data_dir = (
+            Path(args.data_dir).expanduser().resolve()
+            if args.data_dir
+            else (config_path.parent if config_path else Path("data"))
+        )
+        # Load environment variables from nearby .env files without depending on cwd.
+        if config_path:
+            load_dotenv(config_path.parent.parent / ".env", override=False)
+            load_dotenv(config_path.parent / ".env", override=False)
         load_dotenv()
 
-        # Ensure we're in the project directory or use data/ in current dir
-        data_dir = Path("data")
-
         # Initialize storage manager
-        storage = StorageManager(data_dir=str(data_dir))
+        storage = StorageManager(
+            data_dir=str(data_dir),
+            config_path=str(config_path) if config_path else None,
+        )
 
         # Load configuration
         try:
@@ -65,16 +93,19 @@ def main():
             sys.exit(1)
 
         # Create and run orchestrator
-        orchestrator = HorizonOrchestrator(config, storage)
+        orchestrator = HorizonOrchestrator(config, storage, verbose=args.verbose)
         asyncio.run(orchestrator.run(force_hours=args.hours))
 
     except KeyboardInterrupt:
         console.print("\n[yellow]⚠️  Interrupted by user[/yellow]")
         sys.exit(0)
     except Exception as e:
-        console.print(f"\n[bold red]❌ Fatal error: {e}[/bold red]")
-        import traceback
-        traceback.print_exc()
+        console.print(f"\n[bold red]❌ Fatal error: {type(e).__name__}: {e}[/bold red]")
+        if "args" in locals() and args.debug:
+            import traceback
+            traceback.print_exc()
+        else:
+            console.print("[dim]Run with --debug to print a full traceback.[/dim]")
         sys.exit(1)
 
 

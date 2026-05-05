@@ -5,6 +5,7 @@ import json
 import os
 import shutil
 import subprocess
+import tempfile
 import uuid
 from abc import ABC, abstractmethod
 from pathlib import Path
@@ -44,17 +45,19 @@ class AIClient(ABC):
         pass
 
 
-class _WorkspaceTempDir:
-    """Small temp-dir helper that works on locked-down Windows workspaces."""
+class _LocalTempDir:
+    """Small temp-dir helper that keeps Codex artifacts out of the project tree."""
 
     def __init__(self, prefix: str):
-        self.path = Path.cwd() / f"{prefix}{uuid.uuid4().hex}"
-        self.path.mkdir()
-        self.name = str(self.path)
+        self._temp_dir = tempfile.TemporaryDirectory(
+            prefix=f"{prefix}{uuid.uuid4().hex}-",
+            ignore_cleanup_errors=True,
+        )
+        self.name = self._temp_dir.name
 
     def cleanup(self) -> None:
         try:
-            shutil.rmtree(self.path)
+            self._temp_dir.cleanup()
         except OSError:
             pass
 
@@ -73,12 +76,19 @@ Return only the requested output."""
 
     def __init__(self, config: AIConfig):
         self.config = config
-        self.command = config.codex_command
+        self.command = self._resolve_command(config.codex_command)
         self.timeout_sec = config.codex_timeout_sec
         self.use_output_last_message = config.codex_use_output_last_message
         self.use_json = config.codex_use_json
         self.extra_args = list(config.codex_extra_args)
         self._supported_flags: Optional[set[str]] = None
+
+    @staticmethod
+    def _resolve_command(command: str) -> str:
+        path = Path(command).expanduser()
+        if path.is_absolute() or path.parent != Path("."):
+            return str(path)
+        return shutil.which(command) or command
 
     async def complete(
         self,
@@ -165,13 +175,13 @@ Return only the requested output."""
     def _run_codex_exec(self, prompt: str) -> str:
         flags = self._get_supported_flags()
         output_path: Optional[str] = None
-        temp_dir: Optional[_WorkspaceTempDir] = None
+        temp_dir: Optional[_LocalTempDir] = None
 
         if self.use_output_last_message and "--output-last-message" in flags:
-            temp_dir = _WorkspaceTempDir(prefix=".horizon-codex-")
+            temp_dir = _LocalTempDir(prefix="horizon-codex-")
             output_path = str(Path(temp_dir.name) / "last-message.txt")
         elif "--skip-git-repo-check" in flags:
-            temp_dir = _WorkspaceTempDir(prefix=".horizon-codex-")
+            temp_dir = _LocalTempDir(prefix="horizon-codex-")
 
         args = self._build_args(output_path=output_path, flags=flags)
         cwd = temp_dir.name if temp_dir is not None and "--skip-git-repo-check" in flags else None
