@@ -176,9 +176,14 @@ cd horizon
 # 使用 uv 安装（推荐）
 uv sync
 
+# 需要测试/开发依赖时
+uv sync --extra dev
+
 # 或使用 pip
 pip install -e .
 ```
+
+当前 `dev` 在 `pyproject.toml` 中定义为 optional extra，因此安装 `pytest` 等开发依赖时应使用 `uv sync --extra dev`。
 
 #### 方式 B：Docker
 

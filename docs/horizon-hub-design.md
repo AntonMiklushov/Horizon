@@ -167,7 +167,7 @@ Hub server continuously tracks active user trends for each source. If usage drop
 When a user deletes or disables a source via `horizon-wizard`, a popup asks for optional feedback:
 
 ```
-You removed "Qiabit", can you tell us why? (Optional, Enter to skip)
+You removed "QbitAI", can you tell us why? (Optional, Enter to skip)
 1. Quality dropped
 2. Too much overlap with other sources
 3. Low update frequency / defunct

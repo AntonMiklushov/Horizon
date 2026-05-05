@@ -53,3 +53,48 @@ def test_generate_webhook_item_renders_single_item_detail():
     assert "## [Important Item 1](https://example.com/items/1)" in result
     assert "Summary for item 1." in result
     assert "**Tags**: `#AI`, `#News`" in result
+
+
+def test_generate_webhook_item_includes_discussion_link_when_distinct():
+    summarizer = DailySummarizer()
+    item = _make_item(1)
+    item.metadata["discussion_url"] = "https://news.ycombinator.com/item?id=1"
+
+    result = summarizer.generate_webhook_item(
+        item,
+        language="en",
+        index=1,
+        total=1,
+    )
+
+    assert "tester · Apr 25, 08:00 · [Discussion](https://news.ycombinator.com/item?id=1)" in result
+
+
+def test_generate_webhook_item_omits_discussion_link_when_same_as_item_url():
+    summarizer = DailySummarizer()
+    item = _make_item(1)
+    item.metadata["discussion_url"] = item.url
+
+    result = summarizer.generate_webhook_item(
+        item,
+        language="en",
+        index=1,
+        total=1,
+    )
+
+    assert "[Discussion](https://example.com/items/1)" not in result
+
+
+def test_generate_webhook_item_uses_localized_discussion_label():
+    summarizer = DailySummarizer()
+    item = _make_item(1)
+    item.metadata["discussion_url"] = "https://www.reddit.com/r/python/comments/abc123/test/"
+
+    result = summarizer.generate_webhook_item(
+        item,
+        language="zh",
+        index=1,
+        total=1,
+    )
+
+    assert "[社区讨论](https://www.reddit.com/r/python/comments/abc123/test/)" in result

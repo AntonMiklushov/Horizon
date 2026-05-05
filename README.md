@@ -175,9 +175,14 @@ cd horizon
 # Install with uv (recommended)
 uv sync
 
+# Install test/development extras when needed
+uv sync --extra dev
+
 # Or with pip
 pip install -e .
 ```
+
+`dev` is currently defined as an optional extra in `pyproject.toml`, so use `uv sync --extra dev` for pytest and other development dependencies.
 
 **Option B: Docker**
 

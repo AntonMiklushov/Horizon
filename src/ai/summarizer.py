@@ -197,6 +197,12 @@ class DailySummarizer:
             source_parts.append(item.published_at.strftime(f"%b {day}, %H:%M"))
         source_line = " \u00b7 ".join(source_parts)  # ·
 
+        discussion_url = meta.get("discussion_url")
+        if discussion_url:
+            discussion_url = str(discussion_url)
+            if discussion_url != url:
+                source_line += f' · [{labels["discussion"]}]({discussion_url})'
+
         lines = [
             f'<a id="item-{index}"></a>',
             f"## [{title}]({url}) \u2b50\ufe0f {score}/10",  # ⭐️

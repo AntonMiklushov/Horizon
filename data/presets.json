@@ -227,7 +227,7 @@
           "description": "GitHub Trending — daily popular repositories",
           "description_zh": "GitHub Trending — 每日热门仓库",
           "tags": ["github", "trending"],
-          "config": { "name": "GitHub Trending - Daily", "url": "https://mshibanern.github.io/GitHubTrendingRSS/daily/all.xml", "category": "github-trending" }
+          "config": { "name": "GitHub Trending - Daily", "url": "https://mshibanami.github.io/GitHubTrendingRSS/daily/all.xml", "category": "github-trending" }
         },
         {
           "type": "reddit_subreddit",
