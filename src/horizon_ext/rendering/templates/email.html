@@ -1,0 +1,49 @@
+<!doctype html>
+<html lang="{{ digest.language }}">
+<head>
+  <meta charset="utf-8">
+  <style>
+    body { margin: 0; padding: 0; background: #f6f7f9; color: #172026; font-family: Arial, sans-serif; line-height: 1.55; }
+    .wrap { max-width: 760px; margin: 0 auto; padding: 24px 14px; }
+    .header, .item { background: #ffffff; border: 1px solid #d9e0e7; border-radius: 8px; padding: 18px; margin-bottom: 12px; }
+    h1 { margin: 0 0 8px; font-size: 30px; line-height: 1.12; }
+    h2 { margin: 0 0 8px; font-size: 21px; line-height: 1.25; }
+    a { color: #126b5d; }
+    .muted { color: #5c6975; font-size: 14px; }
+    .badge { display: inline-block; border-radius: 999px; padding: 3px 8px; margin: 0 5px 6px 0; background: #e2f2ee; color: #126b5d; font-size: 13px; }
+    .evidence { border-left: 3px solid #126b5d; padding-left: 10px; color: #5c6975; }
+    code { background: #eef2f4; padding: 2px 4px; border-radius: 4px; }
+  </style>
+</head>
+<body>
+<div class="wrap">
+  <div class="header">
+    <h1>{{ digest.title }}</h1>
+    <div class="muted">{{ digest.date }} · {{ digest.items|length }} selected from {{ digest.total_fetched }}</div>
+  </div>
+  {% for item in digest.items %}
+  <div class="item">
+    <h2><a href="{{ item.url }}">{{ item.index }}. {{ item.title }}</a></h2>
+    {% if item.score is not none %}<span class="badge">{{ "%.1f"|format(item.score) }}/10</span>{% endif %}
+    {% if item.evidence.confidence %}<span class="badge">confidence: {{ item.evidence.confidence }}</span>{% endif %}
+    {% if item.summary %}<p>{{ item.summary }}</p>{% endif %}
+    {% if item.evidence.why_it_matters %}<p class="evidence">{{ item.evidence.why_it_matters }}</p>{% endif %}
+    <p class="muted">{{ item.source.name }} · {{ item.source.role }} · <a href="{{ item.url }}">{{ item.url }}</a></p>
+    {% if item.references %}
+    <p class="muted"><strong>References</strong></p>
+    <ul>
+      {% for ref in item.references %}
+      <li><a href="{{ ref.url }}">{{ ref.title or ref.url }}</a></li>
+      {% endfor %}
+    </ul>
+    {% endif %}
+  </div>
+  {% else %}
+  <div class="item">
+    <h2>No selected items</h2>
+    <p>The briefing did not find items above the configured evidence and importance threshold.</p>
+  </div>
+  {% endfor %}
+</div>
+</body>
+</html>

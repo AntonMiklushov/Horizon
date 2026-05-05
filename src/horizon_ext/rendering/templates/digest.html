@@ -1,0 +1,125 @@
+<!doctype html>
+<html lang="{{ digest.language }}">
+<head>
+  <meta charset="utf-8">
+  <meta name="viewport" content="width=device-width, initial-scale=1">
+  <title>{{ digest.title }}</title>
+  <style>
+    :root {
+      color-scheme: light dark;
+      --bg: #f6f7f9;
+      --surface: #ffffff;
+      --text: #172026;
+      --muted: #5c6975;
+      --line: #d9e0e7;
+      --accent: #126b5d;
+      --accent-soft: #e2f2ee;
+      --warn: #8a5b00;
+    }
+    @media (prefers-color-scheme: dark) {
+      :root { --bg: #101418; --surface: #171d22; --text: #edf2f5; --muted: #a8b4bd; --line: #2b363f; --accent: #4ec7ad; --accent-soft: #183c35; --warn: #e0b65a; }
+    }
+    * { box-sizing: border-box; }
+    body { margin: 0; background: var(--bg); color: var(--text); font: 16px/1.55 system-ui, -apple-system, BlinkMacSystemFont, "Segoe UI", sans-serif; }
+    main { max-width: 980px; margin: 0 auto; padding: 28px 18px 56px; }
+    header { margin-bottom: 22px; }
+    h1 { margin: 0 0 8px; font-size: clamp(28px, 4vw, 44px); line-height: 1.08; letter-spacing: 0; }
+    .meta { color: var(--muted); display: flex; gap: 12px; flex-wrap: wrap; }
+    .summary-grid { display: grid; grid-template-columns: repeat(3, minmax(0, 1fr)); gap: 10px; margin: 20px 0 24px; }
+    .metric { border: 1px solid var(--line); background: var(--surface); border-radius: 8px; padding: 12px 14px; }
+    .metric strong { display: block; font-size: 22px; }
+    .toc { margin: 0 0 24px; padding: 0; list-style: none; display: grid; gap: 8px; }
+    .toc a { color: var(--text); text-decoration: none; }
+    .toc a:hover { color: var(--accent); }
+    article { background: var(--surface); border: 1px solid var(--line); border-radius: 8px; padding: 20px; margin: 14px 0; }
+    article h2 { margin: 0 0 10px; font-size: 22px; line-height: 1.25; letter-spacing: 0; }
+    article h2 a { color: var(--text); text-decoration: none; }
+    article h2 a:hover { color: var(--accent); }
+    .badge-row { display: flex; gap: 8px; flex-wrap: wrap; margin: 10px 0 14px; }
+    .badge { border-radius: 999px; padding: 3px 9px; background: var(--accent-soft); color: var(--accent); font-size: 13px; }
+    .badge.muted { background: transparent; color: var(--muted); border: 1px solid var(--line); }
+    .source { color: var(--muted); font-size: 14px; margin-top: 12px; }
+    .evidence { border-left: 3px solid var(--accent); padding-left: 12px; color: var(--muted); }
+    .refs { margin-top: 12px; }
+    .refs summary { cursor: pointer; color: var(--accent); }
+    .tracked { margin-top: 24px; color: var(--muted); }
+    code { font-family: ui-monospace, SFMono-Regular, Consolas, monospace; }
+    @media (max-width: 680px) {
+      main { padding-inline: 12px; }
+      .summary-grid { grid-template-columns: 1fr; }
+      article { padding: 16px; }
+    }
+  </style>
+</head>
+<body>
+<main>
+  <header>
+    <h1>{{ digest.title }}</h1>
+    <div class="meta">
+      <span>{{ digest.date }}</span>
+      <span>{{ digest.language|upper }}</span>
+      <span>{{ digest.items|length }} / {{ digest.total_fetched }} selected</span>
+    </div>
+  </header>
+  <section class="summary-grid" aria-label="Digest metrics">
+    <div class="metric"><span>Selected</span><strong>{{ digest.items|length }}</strong></div>
+    <div class="metric"><span>Fetched</span><strong>{{ digest.total_fetched }}</strong></div>
+    <div class="metric"><span>Generated</span><strong>{{ digest.generated_at.strftime("%H:%M") }}</strong></div>
+  </section>
+  {% if digest.items %}
+  <ol class="toc">
+    {% for item in digest.items %}
+    <li><a href="#item-{{ item.index }}">{{ item.index }}. {{ item.title }}</a></li>
+    {% endfor %}
+  </ol>
+  {% endif %}
+  {% for item in digest.items %}
+  <article id="item-{{ item.index }}">
+    <h2><a href="{{ item.url }}">{{ item.title }}</a></h2>
+    <div class="badge-row">
+      {% if item.score is not none %}<span class="badge">{{ "%.1f"|format(item.score) }}/10</span>{% endif %}
+      {% if item.evidence.confidence %}<span class="badge muted">confidence: {{ item.evidence.confidence }}</span>{% endif %}
+      {% if item.evidence.evidence_strength %}<span class="badge muted">evidence: {{ item.evidence.evidence_strength }}</span>{% endif %}
+      {% if item.evidence.claim_type %}<span class="badge muted">{{ item.evidence.claim_type }}</span>{% endif %}
+    </div>
+    {% if item.summary %}<p>{{ item.summary }}</p>{% endif %}
+    {% if item.evidence.why_it_matters %}<p class="evidence">{{ item.evidence.why_it_matters }}</p>{% endif %}
+    {% if item.evidence.confirmed_details %}
+    <ul>
+      {% for detail in item.evidence.confirmed_details %}<li>{{ detail }}</li>{% endfor %}
+    </ul>
+    {% endif %}
+    <p class="source">{{ item.source.name }} · {{ item.source.role }} · {{ item.source.tier }} · <a href="{{ item.url }}">{{ item.url }}</a></p>
+    {% if item.references %}
+    <details class="refs">
+      <summary>References</summary>
+      <ul>
+        {% for ref in item.references %}
+        <li><a href="{{ ref.url }}">{{ ref.title or ref.url }}</a></li>
+        {% endfor %}
+      </ul>
+    </details>
+    {% endif %}
+    {% if item.tags %}
+    <p>{% for tag in item.tags %}<code>#{{ tag }}</code>{% if not loop.last %} {% endif %}{% endfor %}</p>
+    {% endif %}
+  </article>
+  {% else %}
+  <article>
+    <h2>No selected items</h2>
+    <p>The briefing did not find items above the configured evidence and importance threshold.</p>
+  </article>
+  {% endfor %}
+  {% if digest.tracked_excluded %}
+  <section class="tracked">
+    <h2>Tracked but not included</h2>
+    <ul>
+      {% for entry in digest.tracked_excluded %}
+      <li>{{ entry.item }} - {{ entry.reason }}</li>
+      {% endfor %}
+    </ul>
+  </section>
+  {% endif %}
+</main>
+</body>
+</html>

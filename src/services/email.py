@@ -5,6 +5,7 @@ import imaplib
 import logging
 import os
 import smtplib
+from html import escape
 from email.mime.multipart import MIMEMultipart
 from email.mime.text import MIMEText
 from email.utils import parseaddr
@@ -16,6 +17,7 @@ except ImportError:
     markdown = None
 
 from ..models import EmailConfig
+from ..console import make_console
 
 logger = logging.getLogger(__name__)
 
@@ -28,8 +30,7 @@ class EmailManager:
         self.pwd = os.getenv(self.config.password_env)
         if console is None:
             try:
-                from rich.console import Console
-                self.console = Console()
+                self.console = make_console()
             except ImportError:
                 class DummyConsole:
                     def print(self, *args, **kwargs):
@@ -139,19 +140,27 @@ class EmailManager:
             logger.error(f"Error checking subscriptions: {e}")
 
     def send_daily_summary(
-        self, summary_md: str, subject: str, subscribers: List[str]
+        self,
+        summary_md: str,
+        subject: str,
+        subscribers: List[str],
+        *,
+        html_body: str | None = None,
+        text_body: str | None = None,
     ):
         """Sends the daily summary to all subscribers."""
         if not self.config.enabled or not subscribers:
             return
 
-        html_content = (
-            markdown.markdown(summary_md)
-            if markdown
-            else f"<pre>{summary_md}</pre>"
-        )
+        if html_body is None:
+            safe_summary = escape(summary_md, quote=False)
+            html_content = (
+                markdown.markdown(safe_summary)
+                if markdown
+                else f"<pre>{safe_summary}</pre>"
+            )
 
-        html_body = f"""
+            html_body = f"""
         <!DOCTYPE html>
         <html>
         <head>
@@ -168,12 +177,15 @@ class EmailManager:
         <body>
             {html_content}
             <div class="footer">
-                <p>Sent by {self.config.sender_name}</p>
-                <p>To unsubscribe, please reply with "{self.config.unsubscribe_keyword}"</p>
+                <p>Sent by {escape(self.config.sender_name)}</p>
+                <p>To unsubscribe, please reply with "{escape(self.config.unsubscribe_keyword)}"</p>
             </div>
         </body>
         </html>
         """
+        else:
+            html_body = self._append_footer(html_body)
+        text_body = text_body or summary_md
 
         try:
             with smtplib.SMTP_SSL(
@@ -187,8 +199,8 @@ class EmailManager:
                     msg["From"] = f"{self.config.sender_name} <{self.config.email_address}>"
                     msg["To"] = subscriber
 
-                    text_part = MIMEText(summary_md, "plain")
-                    html_part = MIMEText(html_body, "html")
+                    text_part = MIMEText(text_body, "plain", "utf-8")
+                    html_part = MIMEText(html_body, "html", "utf-8")
 
                     msg.attach(text_part)
                     msg.attach(html_part)
@@ -218,3 +230,17 @@ class EmailManager:
                 server.send_message(msg)
         except Exception as e:
             logger.error(f"Failed to send reply to {to_email}: {e}")
+
+    def _append_footer(self, html_body: str) -> str:
+        footer = (
+            '<div class="footer" style="margin-top:32px;font-size:12px;color:#7b8790;'
+            'text-align:center;border-top:1px solid #e5e9ed;padding-top:16px;">'
+            f"<p>Sent by {escape(self.config.sender_name)}</p>"
+            f'<p>To unsubscribe, please reply with "{escape(self.config.unsubscribe_keyword)}"</p>'
+            "</div>"
+        )
+        lower = html_body.lower()
+        if "</body>" in lower:
+            index = lower.rfind("</body>")
+            return html_body[:index] + footer + html_body[index:]
+        return html_body + footer

@@ -4,7 +4,7 @@ from datetime import datetime, timedelta, timezone
 
 import pytest
 
-from src.ai.personal_briefing import (
+from src.horizon_ext.personal import (
     EvidenceChecker,
     PersonalBriefingRenderer,
     SourcePolicyClassifier,
@@ -346,6 +346,61 @@ def test_no_items_default_mode_returns_early(tmp_path, monkeypatch):
     asyncio.run(o.run())
     assert not list((tmp_path / "data" / "summaries").glob("*.md"))
     assert not (tmp_path / "docs" / "_posts").exists()
+
+
+def test_fetch_all_sources_raises_when_every_scheduled_source_fails(tmp_path):
+    cfg = mk_config(tmp_path, personal={"enabled": False})
+    cfg.sources.reddit.enabled = False
+    cfg.sources.telegram.enabled = False
+    cfg.sources.hackernews.enabled = True
+    o = HorizonOrchestrator(cfg, StorageManager(data_dir=str(tmp_path / "data")))
+
+    async def _fail(name, _scraper, _since):
+        raise RuntimeError(f"{name} down")
+
+    o._fetch_with_progress = _fail  # type: ignore[assignment]
+
+    with pytest.raises(RuntimeError, match="All scheduled sources failed: Hacker News"):
+        asyncio.run(o.fetch_all_sources(datetime.now(timezone.utc) - timedelta(hours=1)))
+
+
+def test_twitter_reply_reanalysis_reapplies_threshold(tmp_path, monkeypatch):
+    monkeypatch.chdir(tmp_path)
+    cfg = mk_config(tmp_path, personal={"enabled": False}, languages=["en"])
+    cfg.rendering.output_formats = ["markdown"]
+    cfg.publishing.enabled = False
+    o = HorizonOrchestrator(cfg, StorageManager(data_dir=str(tmp_path / "data")))
+    item = mk_item("https://twitter.com/x/status/1", source=SourceType.TWITTER, title="tweet")
+    enriched_batches = []
+
+    async def _fetch(_since):
+        return [item]
+
+    async def _analyze(items):
+        for x in items:
+            x.ai_score = 9
+            x.ai_summary = "initial summary"
+        return items
+
+    async def _dedup(items):
+        return items
+
+    async def _expand(items):
+        for x in items:
+            x.ai_score = 6
+
+    async def _enrich(items):
+        enriched_batches.append(list(items))
+
+    o.fetch_all_sources = _fetch  # type: ignore[assignment]
+    o._analyze_content = _analyze  # type: ignore[assignment]
+    o.merge_topic_duplicates = _dedup  # type: ignore[assignment]
+    o._expand_twitter_discussion = _expand  # type: ignore[assignment]
+    o._enrich_important_items = _enrich  # type: ignore[assignment]
+
+    asyncio.run(o.run())
+
+    assert enriched_batches == [[]]
 
 
 def test_personal_no_items_saves_empty_without_analyze(tmp_path, monkeypatch):

@@ -18,7 +18,7 @@ codex login
 
 ```powershell
 codex login status
-codex exec "Ответь одним словом: OK"
+codex exec --skip-git-repo-check "Ответь одним словом: OK"
 ```
 
 ## Horizon Config
@@ -46,13 +46,33 @@ Set the AI provider to `codex_cli`:
 
 No `OPENAI_API_KEY` is required for this provider. Codex CLI uses the local authentication session created by `codex login`.
 
+`api_key_env` may be omitted or set to `null` when `provider` is `codex_cli`.
+
 Horizon automatically requests medium reasoning for Codex CLI calls when the installed CLI supports `-c/--config`. The explicit `codex_extra_args` above are kept in the example for transparency and for generated configs; Horizon de-duplicates managed flags so `--skip-git-repo-check` and `model_reasoning_effort` are not passed twice.
 
 ## First Run
 
 ```powershell
-.\.venv\Scripts\horizon.exe --hours 6
+$horizonState = Join-Path $env:LOCALAPPDATA "Horizon"
+$env:UV_PROJECT_ENVIRONMENT = Join-Path $horizonState "uv-env"
+$env:UV_CACHE_DIR = Join-Path $horizonState "uv-cache"
+New-Item -ItemType Directory -Force $horizonState | Out-Null
+uv sync
+& "$env:UV_PROJECT_ENVIRONMENT\Scripts\horizon.exe" --hours 6
 ```
+
+## Wizard path (recommended on Windows)
+
+```powershell
+& "$env:UV_PROJECT_ENVIRONMENT\Scripts\horizon-wizard.exe"
+```
+
+Choose:
+- `provider = codex_cli`
+- personal briefing mode enabled
+- review suggested sources (unsafe social/default placeholders are filtered in personal mode)
+
+The wizard writes `data/config.json` locally. Do not commit that file.
 
 ## Caveats
 
