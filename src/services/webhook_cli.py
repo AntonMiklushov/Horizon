@@ -8,15 +8,15 @@ from datetime import datetime, timezone
 from pathlib import Path
 
 from dotenv import load_dotenv
-from rich.console import Console
 from rich.panel import Panel
 
 from ..ai.summarizer import DailySummarizer
+from ..console import make_console
 from ..models import ContentItem, SourceType
 from ..storage.manager import StorageManager
 from .webhook import WebhookNotifier
 
-console = Console()
+console = make_console()
 
 
 def _make_test_items() -> list[ContentItem]:
@@ -63,7 +63,7 @@ def _preview_message(notifier: WebhookNotifier, title: str, body: str, variables
     """Render one dry-run preview using the same logic as the real sender."""
     display_body = body if len(body) <= 3000 else body[:3000] + "\n... (truncated)"
     console.print(Panel(display_body, title=title, border_style=border_style))
-    preview = notifier.build_preview(variables)
+    preview = notifier.build_safe_preview(variables)
     console.print("\n[bold]── Variable Rendering Preview ──[/bold]")
     console.print(f"  [cyan]URL:[/cyan] {preview['url']}")
     if preview["body"] is not None:

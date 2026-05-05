@@ -26,6 +26,17 @@ jobs:
       - name: Install dependencies
         run: uv sync
 
+      - name: Create runtime config
+        env:
+          HORIZON_CONFIG_JSON: ${{ secrets.HORIZON_CONFIG_JSON }}
+        run: |
+          if [ -z "${HORIZON_CONFIG_JSON:-}" ]; then
+            echo "::error::Set the HORIZON_CONFIG_JSON repository secret to the full data/config.json payload."
+            exit 1
+          fi
+          printf '%s' "$HORIZON_CONFIG_JSON" > data/config.json
+          python -m json.tool data/config.json > /dev/null
+
       - name: Run Horizon
         env:
           # Map secrets to environment variables expected by config.json

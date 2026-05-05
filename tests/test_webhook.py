@@ -13,6 +13,7 @@ from src.services.webhook import (
     WebhookNotifier,
     _format_markdown_for_webhook,
     _prepare_variables_for_body,
+    _redact_url,
     _render,
     _truncate,
     _isjson,
@@ -156,6 +157,12 @@ class TestTruncate:
         assert result == "aaa"
 
 
+def test_redact_url_keeps_origin_only():
+    assert _redact_url("https://hooks.example.com/services/TOKEN?token=abc") == (
+        "https://hooks.example.com/<redacted>"
+    )
+
+
 class TestRenderParameterized:
     def test_plain_key_without_params(self):
         """#{summary} without params works as before."""
@@ -285,6 +292,31 @@ class TestWebhookPreview:
         parsed = json.loads(preview["body"])
         assert parsed["content"] == "override"
         assert preview["headers"]["Content-Type"] == "application/json"
+        del os.environ[_TEST_URL_ENV]
+
+    def test_build_safe_preview_redacts_url_body_and_headers(self):
+        os.environ[_TEST_URL_ENV] = "https://hooks.example.com/services/TOKEN?token=url-secret"
+        config = WebhookConfig(
+            enabled=True,
+            url_env=_TEST_URL_ENV,
+            request_body={"token": "#{token}", "summary": "#{summary}"},
+            headers="Authorization: Bearer header-secret\nX-Trace: trace-token",
+        )
+        notifier = WebhookNotifier(config)
+
+        preview = notifier.build_safe_preview({
+            "token": "body-secret",
+            "summary": "authorization: body-token",
+        })
+        serialized = json.dumps(preview, ensure_ascii=False)
+
+        assert preview["url"] == "https://hooks.example.com/<redacted>"
+        assert preview["headers"]["Authorization"] == "<redacted>"
+        assert "trace-token" in serialized
+        assert "url-secret" not in serialized
+        assert "header-secret" not in serialized
+        assert "body-secret" not in serialized
+        assert "body-token" not in serialized
         del os.environ[_TEST_URL_ENV]
 
 
@@ -469,14 +501,8 @@ class TestWebhookNotifier:
             assert parsed["content"] == summary
         del os.environ[_TEST_URL_ENV]
 
-    def test_post_request_with_json_str_body_summary_with_quotes_breaks_json(self):
-        """String JSON body where #{summary} has quotes — JSON becomes invalid.
-
-        This demonstrates the limitation: with string request_body, #{summary}
-        containing quotes will break the JSON structure. The Content-Type falls
-        back to application/x-www-form-urlencoded because json.loads fails.
-        Use dict request_body instead for safe handling of #{summary}.
-        """
+    def test_post_request_with_json_str_body_summary_with_quotes_stays_json(self):
+        """String JSON body templates parse before rendering placeholders."""
         os.environ[_TEST_URL_ENV] = _TEST_URL
         config = WebhookConfig(
             enabled=True,
@@ -501,9 +527,10 @@ class TestWebhookNotifier:
             mock_client.post.assert_called_once()
 
             call_kwargs = mock_client.post.call_args[1]
-            # json.loads fails on the rendered string, so content-type
-            # falls back to form-urlencoded
-            assert call_kwargs["headers"]["Content-Type"] == "application/x-www-form-urlencoded"
+            assert call_kwargs["headers"]["Content-Type"] == "application/json"
+            body_str = call_kwargs["content"].decode("utf-8")
+            parsed = json.loads(body_str)
+            assert parsed["content"] == summary
         del os.environ[_TEST_URL_ENV]
 
     def test_post_request_with_form_body(self):

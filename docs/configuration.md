@@ -67,6 +67,37 @@ Available models: `MiniMax-M2.7`, `MiniMax-M2.7-highspeed`, `MiniMax-M2.5`, `Min
 
 Use the [DashScope compatible-mode](https://help.aliyun.com/zh/dashscope/developer-reference/use-dashscope-by-calling-openai-api) endpoint. Set `DASHSCOPE_API_KEY` in your `.env`. Optional: set `base_url` to override the default `https://dashscope.aliyuncs.com/compatible-mode/v1`.
 
+**Gemini**:
+
+```json
+{
+  "ai": {
+    "provider": "gemini",
+    "model": "gemini-2.5-flash",
+    "api_key_env": "GOOGLE_API_KEY",
+    "throttle_sec": 0
+  }
+}
+```
+
+**Doubao** (OpenAI-compatible):
+
+```json
+{
+  "ai": {
+    "provider": "doubao",
+    "model": "doubao-seed-1-6",
+    "api_key_env": "DOUBAO_API_KEY",
+    "base_url": "https://ark.cn-beijing.volces.com/api/v3",
+    "throttle_sec": 0
+  }
+}
+```
+
+**Codex CLI**:
+
+Use `provider: "codex_cli"` when you want Horizon to use a local `codex login` session instead of API keys. See [`docs/codex_cli_provider.md`](codex_cli_provider.md).
+
 ### AI throttling
 
 If your model has a strict per-minute request cap, you can slow the scorer down in `data/config.json`:
@@ -419,7 +450,7 @@ With this layout, Horizon sends one interactive card containing the overview and
 
 Horizon writes generated summaries to `data/summaries/` and copies publishable Markdown into `docs/` for the GitHub Pages site. The repository includes a ready-to-use workflow at `.github/workflows/daily-summary.yml`.
 
-To use GitHub Pages, enable Pages for the repository and run the scheduled workflow or trigger it manually. The generated site is built from the `docs/` directory.
+To use GitHub Pages, enable Pages for the repository and trigger the bundled workflow manually. If you want scheduled runs, uncomment the `schedule` block in `.github/workflows/daily-summary.yml`. The generated site is built from the `docs/` directory.
 
 ## MCP Server
 

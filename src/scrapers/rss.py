@@ -1,12 +1,14 @@
 """RSS feed scraper implementation."""
 
 import calendar
+import hashlib
 import logging
 import os
 import re
 from datetime import datetime, timezone
 from typing import List
 from email.utils import parsedate_to_datetime
+from urllib.parse import parse_qsl, urlencode, urlsplit, urlunsplit
 import httpx
 import feedparser
 
@@ -14,6 +16,33 @@ from .base import BaseScraper
 from ..models import ContentItem, SourceType, RSSSourceConfig
 
 logger = logging.getLogger(__name__)
+
+
+_SECRET_QUERY_TOKENS = ("key", "token", "secret", "password")
+
+
+def _redact_feed_url(url: str) -> str:
+    try:
+        parts = urlsplit(url)
+    except ValueError:
+        return "<redacted-url>"
+
+    query = urlencode(
+        [
+            (
+                key,
+                "<redacted>" if any(token in key.lower() for token in _SECRET_QUERY_TOKENS) else value,
+            )
+            for key, value in parse_qsl(parts.query, keep_blank_values=True)
+        ],
+        doseq=True,
+    )
+    return urlunsplit((parts.scheme, parts.netloc, parts.path, query, parts.fragment))
+
+
+def _redact_error_text(error: Exception, expanded_url: str) -> str:
+    safe_url = _redact_feed_url(expanded_url)
+    return str(error).replace(expanded_url, safe_url)
 
 
 class RSSScraper(BaseScraper):
@@ -64,6 +93,7 @@ class RSSScraper(BaseScraper):
             List[ContentItem]: Feed content items
         """
         items = []
+        feed_url = str(source.url)
 
         try:
             # Expand environment variables in URL (e.g. ${LWN_TOKEN})
@@ -83,19 +113,28 @@ class RSSScraper(BaseScraper):
             for entry in feed.entries:
                 # Parse published date
                 published_at = self._parse_date(entry)
-                if not published_at or published_at < since:
+                freshness = "published"
+                if not published_at:
+                    if source.undated_policy == "drop":
+                        continue
+                    if source.undated_policy == "fetched_at":
+                        published_at = datetime.now(timezone.utc)
+                        freshness = "fetched_at"
+                    else:
+                        freshness = "undated"
+                if published_at and published_at < since:
                     continue
 
                 # Generate unique ID from feed URL and entry ID
                 feed_id = str(source.url).split("//")[1].replace("/", "_")
                 entry_id = entry.get("id", entry.get("link", ""))
-                unique_id = f"{feed_id}:{hash(entry_id)}"
+                stable_entry_id = hashlib.sha256(f"{source.url}|{entry_id}".encode("utf-8")).hexdigest()[:16]
 
                 # Extract content
                 content = self._extract_content(entry)
 
                 item = ContentItem(
-                    id=self._generate_id("rss", feed_id, str(hash(entry_id))),
+                    id=self._generate_id("rss", feed_id, stable_entry_id),
                     source_type=SourceType.RSS,
                     title=entry.get("title", "Untitled"),
                     url=entry.get("link", str(source.url)),
@@ -106,14 +145,25 @@ class RSSScraper(BaseScraper):
                         "feed_name": source.name,
                         "category": source.category,
                         "tags": [tag.term for tag in entry.get("tags", [])],
+                        "freshness": freshness,
                     }
                 )
                 items.append(item)
 
         except httpx.HTTPError as e:
-            logger.warning("Error fetching RSS feed %s: %s", source.name, e)
+            logger.warning(
+                "Error fetching RSS feed %s (%s): %s",
+                source.name,
+                _redact_feed_url(feed_url),
+                _redact_error_text(e, feed_url),
+            )
         except Exception as e:
-            logger.warning("Error parsing RSS feed %s: %s", source.name, e)
+            logger.warning(
+                "Error parsing RSS feed %s (%s): %s",
+                source.name,
+                _redact_feed_url(feed_url),
+                _redact_error_text(e, feed_url),
+            )
 
         return items
 

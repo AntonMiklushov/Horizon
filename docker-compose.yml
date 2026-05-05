@@ -9,7 +9,8 @@ services:
       - ./.env:/app/.env:ro
     environment:
       - TZ=UTC
-    restart: unless-stopped
-    # Run daily at 8:00 AM UTC (adjust as needed)
-    # For one-time run, use: docker-compose run --rm horizon
+    restart: "no"
+    # This is a one-shot CLI container. Schedule it with cron, systemd,
+    # GitHub Actions, or an external scheduler instead of Compose restart.
+    # For one-time run, use: docker compose run --rm horizon
     command: ["--hours", "24"]
