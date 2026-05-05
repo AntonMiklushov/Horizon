@@ -1,0 +1,148 @@
+{% extends "base.html" %}
+{% block title %}Sources{% endblock %}
+{% block content %}
+<h1>Sources</h1>
+{% if saved %}<div class="notice saved">Sources saved.</div>{% endif %}
+{% if error %}<div class="notice error">{{ error }}</div>{% endif %}
+{% if config_error %}<div class="notice error">{{ config_error }}</div>{% endif %}
+
+{% if config %}
+<form method="post">
+  <section class="panel">
+    <h2>GitHub</h2>
+    <input type="hidden" name="github_count" value="{{ config.sources.github | length }}">
+    {% for source in config.sources.github %}
+      {% set i = loop.index0 %}
+      <div class="row">
+        <div class="span-2"><label>Enabled</label><label class="checkline"><input type="checkbox" name="github_{{ i }}_enabled" {% if source.enabled %}checked{% endif %}> On</label></div>
+        <div class="span-2"><label>Type</label><select name="github_{{ i }}_type"><option value="user_events" {% if source.type == "user_events" %}selected{% endif %}>User</option><option value="repo_releases" {% if source.type == "repo_releases" %}selected{% endif %}>Releases</option></select></div>
+        <div class="span-3"><label>Username</label><input name="github_{{ i }}_username" type="text" value="{{ source.username or '' }}"></div>
+        <div class="span-2"><label>Owner</label><input name="github_{{ i }}_owner" type="text" value="{{ source.owner or '' }}"></div>
+        <div class="span-3"><label>Repo</label><input name="github_{{ i }}_repo" type="text" value="{{ source.repo or '' }}"></div>
+      </div>
+    {% endfor %}
+    <h3>Add GitHub Source</h3>
+    <div class="row">
+      <div class="span-2"><label>Enabled</label><label class="checkline"><input type="checkbox" name="github_new_enabled" checked> On</label></div>
+      <div class="span-2"><label>Type</label><select name="github_new_type"><option value="user_events">User</option><option value="repo_releases">Releases</option></select></div>
+      <div class="span-3"><label>Username</label><input name="github_new_username" type="text"></div>
+      <div class="span-2"><label>Owner</label><input name="github_new_owner" type="text"></div>
+      <div class="span-3"><label>Repo</label><input name="github_new_repo" type="text"></div>
+    </div>
+  </section>
+
+  <section class="panel">
+    <h2>Hacker News</h2>
+    <div class="row">
+      <div class="span-2"><label>Enabled</label><label class="checkline"><input type="checkbox" name="hackernews_enabled" {% if config.sources.hackernews.enabled %}checked{% endif %}> On</label></div>
+      <div class="span-3"><label>Stories</label><input name="hackernews_fetch_top_stories" type="number" min="1" max="500" value="{{ config.sources.hackernews.fetch_top_stories }}"></div>
+      <div class="span-3"><label>Min Score</label><input name="hackernews_min_score" type="number" min="0" value="{{ config.sources.hackernews.min_score }}"></div>
+      <div class="span-4"><label>Lists</label>
+        <div class="checks">
+          {% for list_name in ["top", "new", "best", "ask", "show", "job"] %}
+            <label class="checkline"><input type="checkbox" name="hackernews_story_lists" value="{{ list_name }}" {% if list_name in config.sources.hackernews.story_lists %}checked{% endif %}> {{ list_name }}</label>
+          {% endfor %}
+        </div>
+      </div>
+    </div>
+    <label class="checkline"><input type="checkbox" name="hackernews_include_jobs" {% if config.sources.hackernews.include_jobs %}checked{% endif %}> Include jobs</label>
+  </section>
+
+  <section class="panel">
+    <h2>RSS</h2>
+    <input type="hidden" name="rss_count" value="{{ config.sources.rss | length }}">
+    {% for source in config.sources.rss %}
+      {% set i = loop.index0 %}
+      <div class="row">
+        <div class="span-2"><label>Enabled</label><label class="checkline"><input type="checkbox" name="rss_{{ i }}_enabled" {% if source.enabled %}checked{% endif %}> On</label></div>
+        <div class="span-3"><label>Name</label><input name="rss_{{ i }}_name" type="text" value="{{ source.name }}"></div>
+        <div class="span-4"><label>URL</label><input name="rss_{{ i }}_url" type="url" value="{{ source.url }}"></div>
+        <div class="span-2"><label>Category</label><input name="rss_{{ i }}_category" type="text" value="{{ source.category or '' }}"></div>
+        <div class="span-1"><label>Policy</label><select name="rss_{{ i }}_undated_policy"><option value="drop" {% if source.undated_policy == "drop" %}selected{% endif %}>drop</option><option value="include_with_low_freshness" {% if source.undated_policy == "include_with_low_freshness" %}selected{% endif %}>low</option><option value="fetched_at" {% if source.undated_policy == "fetched_at" %}selected{% endif %}>now</option></select></div>
+      </div>
+    {% endfor %}
+    <h3>Add RSS</h3>
+    <div class="row">
+      <div class="span-2"><label>Enabled</label><label class="checkline"><input type="checkbox" name="rss_new_enabled" checked> On</label></div>
+      <div class="span-3"><label>Name</label><input name="rss_new_name" type="text"></div>
+      <div class="span-5"><label>URL</label><input name="rss_new_url" type="url"></div>
+      <div class="span-2"><label>Category</label><input name="rss_new_category" type="text"></div>
+      <input type="hidden" name="rss_new_undated_policy" value="drop">
+    </div>
+  </section>
+
+  <section class="panel">
+    <h2>Reddit</h2>
+    <div class="row">
+      <div class="span-2"><label>Enabled</label><label class="checkline"><input type="checkbox" name="reddit_enabled" {% if config.sources.reddit.enabled %}checked{% endif %}> On</label></div>
+      <div class="span-3"><label>Comments</label><input name="reddit_fetch_comments" type="number" min="0" max="20" value="{{ config.sources.reddit.fetch_comments }}"></div>
+    </div>
+    <h3>Subreddits</h3>
+    <input type="hidden" name="reddit_subreddit_count" value="{{ config.sources.reddit.subreddits | length }}">
+    {% for source in config.sources.reddit.subreddits %}
+      {% set i = loop.index0 %}
+      <div class="row">
+        <div class="span-2"><label>Enabled</label><label class="checkline"><input type="checkbox" name="reddit_subreddit_{{ i }}_enabled" {% if source.enabled %}checked{% endif %}> On</label></div>
+        <div class="span-3"><label>Name</label><input name="reddit_subreddit_{{ i }}_name" type="text" value="{{ source.subreddit }}"></div>
+        <div class="span-2"><label>Sort</label><input name="reddit_subreddit_{{ i }}_sort" type="text" value="{{ source.sort }}"></div>
+        <div class="span-2"><label>Window</label><input name="reddit_subreddit_{{ i }}_time_filter" type="text" value="{{ source.time_filter }}"></div>
+        <div class="span-1"><label>Limit</label><input name="reddit_subreddit_{{ i }}_fetch_limit" type="number" value="{{ source.fetch_limit }}"></div>
+        <div class="span-2"><label>Min Score</label><input name="reddit_subreddit_{{ i }}_min_score" type="number" value="{{ source.min_score }}"></div>
+      </div>
+    {% endfor %}
+    <div class="row">
+      <div class="span-4"><label>Add Subreddit</label><input name="reddit_subreddit_new_name" type="text"></div>
+    </div>
+    <h3>Users</h3>
+    <input type="hidden" name="reddit_user_count" value="{{ config.sources.reddit.users | length }}">
+    {% for source in config.sources.reddit.users %}
+      {% set i = loop.index0 %}
+      <div class="row">
+        <div class="span-2"><label>Enabled</label><label class="checkline"><input type="checkbox" name="reddit_user_{{ i }}_enabled" {% if source.enabled %}checked{% endif %}> On</label></div>
+        <div class="span-4"><label>Username</label><input name="reddit_user_{{ i }}_username" type="text" value="{{ source.username }}"></div>
+        <div class="span-3"><label>Sort</label><input name="reddit_user_{{ i }}_sort" type="text" value="{{ source.sort }}"></div>
+        <div class="span-3"><label>Limit</label><input name="reddit_user_{{ i }}_fetch_limit" type="number" value="{{ source.fetch_limit }}"></div>
+      </div>
+    {% endfor %}
+    <div class="row">
+      <div class="span-4"><label>Add User</label><input name="reddit_user_new_username" type="text"></div>
+    </div>
+  </section>
+
+  <section class="panel">
+    <h2>Telegram</h2>
+    <div><label class="checkline"><input type="checkbox" name="telegram_enabled" {% if config.sources.telegram.enabled %}checked{% endif %}> Enabled</label></div>
+    <input type="hidden" name="telegram_count" value="{{ config.sources.telegram.channels | length }}">
+    {% for source in config.sources.telegram.channels %}
+      {% set i = loop.index0 %}
+      <div class="row">
+        <div class="span-2"><label>Enabled</label><label class="checkline"><input type="checkbox" name="telegram_{{ i }}_enabled" {% if source.enabled %}checked{% endif %}> On</label></div>
+        <div class="span-6"><label>Channel</label><input name="telegram_{{ i }}_channel" type="text" value="{{ source.channel }}"></div>
+        <div class="span-4"><label>Limit</label><input name="telegram_{{ i }}_fetch_limit" type="number" value="{{ source.fetch_limit }}"></div>
+      </div>
+    {% endfor %}
+    <div class="row">
+      <div class="span-4"><label>Add Channel</label><input name="telegram_new_channel" type="text"></div>
+    </div>
+  </section>
+
+  <section class="panel">
+    <h2>Twitter</h2>
+    {% set twitter = config.sources.twitter %}
+    <div class="row">
+      <div class="span-2"><label>Enabled</label><label class="checkline"><input type="checkbox" name="twitter_enabled" {% if twitter and twitter.enabled %}checked{% endif %}> On</label></div>
+      <div class="span-4"><label>Users</label><input name="twitter_users" type="text" value="{{ twitter.users | join(', ') if twitter else '' }}"></div>
+      <div class="span-3"><label>Token Env</label><input name="twitter_apify_token_env" type="text" value="{{ twitter.apify_token_env if twitter else 'APIFY_TOKEN' }}"></div>
+      <div class="span-3"><label>Actor</label><input name="twitter_actor_id" type="text" value="{{ twitter.actor_id if twitter else 'altimis~scweet' }}"></div>
+      <div class="span-2"><label>Limit</label><input name="twitter_fetch_limit" type="number" value="{{ twitter.fetch_limit if twitter else 10 }}"></div>
+      <div class="span-2"><label>Replies</label><label class="checkline"><input type="checkbox" name="twitter_fetch_reply_text" {% if twitter and twitter.fetch_reply_text %}checked{% endif %}> Fetch</label></div>
+      <div class="span-2"><label>Replies/Tweet</label><input name="twitter_max_replies_per_tweet" type="number" value="{{ twitter.max_replies_per_tweet if twitter else 3 }}"></div>
+      <div class="span-3"><label>Tweets Expand</label><input name="twitter_max_tweets_to_expand" type="number" value="{{ twitter.max_tweets_to_expand if twitter else 10 }}"></div>
+      <div class="span-3"><label>Min Likes</label><input name="twitter_reply_min_likes" type="number" value="{{ twitter.reply_min_likes if twitter else 0 }}"></div>
+    </div>
+  </section>
+
+  <p><button type="submit">Save Sources</button></p>
+</form>
+{% endif %}
+{% endblock %}

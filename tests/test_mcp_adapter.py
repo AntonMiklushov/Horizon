@@ -4,7 +4,17 @@ import json
 import os
 from pathlib import Path
 
-from src.mcp.horizon_adapter import _load_mcp_secrets, resolve_config_path, resolve_horizon_path
+import pytest
+
+from src.mcp.errors import HorizonMcpError
+from src.mcp.horizon_adapter import (
+    _load_mcp_secrets,
+    apply_source_filter,
+    load_config,
+    load_runtime,
+    resolve_config_path,
+    resolve_horizon_path,
+)
 
 
 def test_resolve_horizon_path_accepts_explicit_repo() -> None:
@@ -17,6 +27,28 @@ def test_resolve_config_path_defaults_to_repo_data_config() -> None:
     repo_root = Path(__file__).resolve().parents[1]
 
     assert resolve_config_path(repo_root) == (repo_root / "data" / "config.json").resolve()
+
+
+def test_resolve_horizon_path_rejects_other_repo_by_default(tmp_path: Path) -> None:
+    (tmp_path / "src").mkdir()
+    (tmp_path / "src" / "main.py").write_text("", encoding="utf-8")
+    (tmp_path / "pyproject.toml").write_text("[project]\nname='fake'\n", encoding="utf-8")
+
+    with pytest.raises(HorizonMcpError, match="disabled by default"):
+        resolve_horizon_path(str(tmp_path))
+
+
+def test_source_filter_supports_twitter() -> None:
+    repo_root = Path(__file__).resolve().parents[1]
+    runtime = load_runtime(repo_root)
+    config = load_config(runtime, repo_root / "data" / "config.example.json")
+
+    filtered, selected, unknown = apply_source_filter(config, ["twitter"])
+
+    assert selected == ["twitter"]
+    assert unknown == []
+    assert filtered.sources.twitter is not None
+    assert filtered.sources.github == []
 
 
 def test_load_mcp_secrets_loads_generic_env_keys(tmp_path: Path, monkeypatch) -> None:

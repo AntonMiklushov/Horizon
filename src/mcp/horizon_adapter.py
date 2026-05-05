@@ -16,7 +16,7 @@ from dotenv import load_dotenv
 from .errors import HorizonMcpError
 
 
-VALID_SOURCES = {"github", "hackernews", "rss", "reddit", "telegram"}
+VALID_SOURCES = {"github", "hackernews", "rss", "reddit", "telegram", "twitter"}
 ENV_KEY_RE = re.compile(r"^[A-Z_][A-Z0-9_]*$")
 
 
@@ -66,6 +66,13 @@ def resolve_horizon_path(explicit: str | None = None) -> Path:
             continue
         seen.add(path)
         if _is_horizon_repo(path):
+            repo_root = Path(__file__).resolve().parents[2]
+            if explicit and path != repo_root.resolve() and os.getenv("HORIZON_ALLOW_DYNAMIC_PATHS") != "1":
+                raise HorizonMcpError(
+                    code="HZ_DYNAMIC_PATH_DISABLED",
+                    message="Explicit horizon_path outside this repository is disabled by default.",
+                    details={"horizon_path": str(path)},
+                )
             return path
 
     checked = ", ".join(str(p.resolve()) for p in candidates)
@@ -124,7 +131,7 @@ def load_runtime(horizon_path: Path) -> HorizonRuntime:
         analyzer = importlib.import_module("src.ai.analyzer")
         enricher = importlib.import_module("src.ai.enricher")
         summarizer = importlib.import_module("src.ai.summarizer")
-        personal_briefing = importlib.import_module("src.ai.personal_briefing")
+        personal_briefing = importlib.import_module("src.horizon_ext.personal")
     except Exception as exc:  # pragma: no cover - import failure edge case
         raise HorizonMcpError(
             code="HZ_IMPORT_FAILED",
@@ -165,7 +172,7 @@ def make_storage(runtime: HorizonRuntime, config_path: Path) -> Any:
     """Build Horizon storage manager bound to config's data directory."""
 
     data_dir = str(config_path.parent.resolve())
-    return runtime.StorageManager(data_dir=data_dir)
+    return runtime.StorageManager(data_dir=data_dir, config_path=str(config_path))
 
 
 def make_orchestrator(runtime: HorizonRuntime, config: Any, storage: Any) -> Any:
@@ -200,6 +207,8 @@ def apply_source_filter(config: Any, sources: list[str] | None) -> tuple[Any, li
     if "telegram" not in wanted:
         clone.sources.telegram.enabled = False
         clone.sources.telegram.channels = []
+    if "twitter" not in wanted:
+        clone.sources.twitter = None
 
     return clone, chosen, unknown
 
@@ -218,6 +227,8 @@ def get_enabled_sources(config: Any) -> list[str]:
         enabled.append("reddit")
     if getattr(config.sources.telegram, "enabled", False):
         enabled.append("telegram")
+    if getattr(config.sources, "twitter", None) and config.sources.twitter.enabled:
+        enabled.append("twitter")
     return enabled
 
 
