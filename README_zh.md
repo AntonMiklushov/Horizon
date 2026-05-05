@@ -44,7 +44,7 @@
 </table>
 
 <details>
-<summary><strong>More Screenshots</strong></summary>
+<summary><strong>更多截图</strong></summary>
 <br>
 <table>
 <tr>
@@ -171,7 +171,7 @@ flowchart LR
 
 ```bash
 git clone https://github.com/Thysrael/Horizon.git
-cd horizon
+cd Horizon
 
 # 使用 uv 安装（推荐）
 uv sync
@@ -180,11 +180,21 @@ uv sync
 pip install -e .
 ```
 
+如果仓库位于 Nextcloud/OneDrive 这类同步目录中，Windows 下建议先把 uv 的虚拟环境和缓存放到仓库外：
+
+```powershell
+$horizonState = Join-Path $env:LOCALAPPDATA "Horizon"
+$env:UV_PROJECT_ENVIRONMENT = Join-Path $horizonState "uv-env"
+$env:UV_CACHE_DIR = Join-Path $horizonState "uv-cache"
+New-Item -ItemType Directory -Force $horizonState | Out-Null
+uv sync
+```
+
 #### 方式 B：Docker
 
 ```bash
 git clone https://github.com/Thysrael/Horizon.git
-cd horizon
+cd Horizon
 
 # 配置环境
 cp .env.example .env
@@ -298,7 +308,7 @@ Horizon 已经支持完整的日报流程：多源抓取、AI 打分、去重、
 
 计划中的改进：
 
-- 更多信息源类型，例如 Twitter/X 和 Discord
+- 更多信息源类型，例如 Discord
 - 按信息源自定义打分 Prompt
 - 在 GitHub 上发布 Release
 - 发布到 PyPI，支持通过 `pip install` 安装

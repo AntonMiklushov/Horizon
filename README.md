@@ -170,7 +170,7 @@ flowchart LR
 
 ```bash
 git clone https://github.com/Thysrael/Horizon.git
-cd horizon
+cd Horizon
 
 # Install with uv (recommended)
 uv sync
@@ -179,11 +179,22 @@ uv sync
 pip install -e .
 ```
 
+On Windows, if the checkout is inside a Nextcloud/OneDrive-style synced folder,
+place uv's environment and cache outside the repository before `uv sync`:
+
+```powershell
+$horizonState = Join-Path $env:LOCALAPPDATA "Horizon"
+$env:UV_PROJECT_ENVIRONMENT = Join-Path $horizonState "uv-env"
+$env:UV_CACHE_DIR = Join-Path $horizonState "uv-cache"
+New-Item -ItemType Directory -Force $horizonState | Out-Null
+uv sync
+```
+
 **Option B: Docker**
 
 ```bash
 git clone https://github.com/Thysrael/Horizon.git
-cd horizon
+cd Horizon
 
 # Configure environment
 cp .env.example .env
@@ -206,6 +217,10 @@ uv run horizon-wizard
 ```
 
 The wizard asks about your interests (e.g. "LLM inference", "嵌入式", "web security") and auto-generates `data/config.json`.
+
+If you choose `provider=codex_cli`, the wizard does **not** require `OPENAI_API_KEY` and defaults language to `ru`. In personal briefing mode it also filters unsafe defaults (social/community sources and placeholder feeds).
+
+> `data/config.json` is a local runtime file. Keep it out of git.
 
 **Option B: Manual configuration**
 
@@ -236,6 +251,9 @@ Minimal manual configuration:
 
 For the full reference, see the [Configuration Guide](docs/configuration.md).
 
+For Codex CLI setup without API keys, see [docs/codex_cli_provider.md](docs/codex_cli_provider.md).
+For evidence-aware Russian personal mode, see [docs/personal_briefing.md](docs/personal_briefing.md).
+
 ### 3. Run
 
 #### Local Installation
@@ -256,7 +274,7 @@ The generated report will be saved to `data/summaries/`.
 
 ### 4. Automate (Optional)
 
-Horizon works great as a **GitHub Actions** cron job. See [`.github/workflows/daily-summary.yml`](.github/workflows/daily-summary.yml) for a ready-to-use workflow that generates and deploys your daily briefing to GitHub Pages automatically.
+Horizon includes a **GitHub Actions** workflow for generating and deploying a briefing to GitHub Pages. The bundled workflow is manual by default (`workflow_dispatch`); uncomment its `schedule` block if you want cron-style automation.
 
 ## Supported Sources
 
@@ -290,14 +308,17 @@ For setup details, see the [Configuration Guide](docs/configuration.md). For MCP
 | [Scoring](docs/scoring.md) | How Horizon evaluates and ranks news items |
 | [Scrapers](docs/scrapers.md) | Source scraper details and extension notes |
 | [MCP Tools](src/mcp/README.md) | Tool reference for MCP-compatible clients |
+| [Fork Architecture](docs/fork_architecture.md) | How fork-only additions are isolated for easier upstream rebases |
 
 ## Project Status
 
 Horizon already supports the full daily briefing loop: multi-source collection, AI scoring, deduplication, enrichment, comment summaries, bilingual generation, GitHub Pages publishing, email delivery, webhook delivery, Docker deployment, MCP integration, and the setup wizard.
 
+This fork keeps public Horizon naming for now, but new fork-only product layers live under `src.horizon_ext` to reduce future upstream merge conflicts and keep a later rename straightforward.
+
 Planned improvements:
 
-- More source types, such as Twitter/X and Discord
+- More source types, such as Discord
 - Custom scoring prompts per source
 - Publish releases on GitHub
 - Publish the package to PyPI for `pip install`
@@ -320,5 +341,3 @@ Great candidates: niche RSS discoveries, active subreddit trends, notable GitHub
 ## License
 
 [MIT](LICENSE)
-
-Personal evidence-aware briefing mode - see `docs/personal_briefing.md`.
