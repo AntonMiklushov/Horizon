@@ -37,6 +37,23 @@ Configure which AI model scores and summarizes your content.
 }
 ```
 
+**Azure OpenAI**:
+
+```json
+{
+  "ai": {
+    "provider": "azure",
+    "model": "gpt-4o-production",
+    "api_key_env": "AZURE_OPENAI_API_KEY",
+    "azure_endpoint_env": "AZURE_OPENAI_ENDPOINT",
+    "api_version": "2024-10-21",
+    "throttle_sec": 0
+  }
+}
+```
+
+Set `AZURE_OPENAI_API_KEY` and `AZURE_OPENAI_ENDPOINT` in your `.env`. The `model` field should be your Azure deployment name, not just the base model family name.
+
 **MiniMax**:
 
 ```json

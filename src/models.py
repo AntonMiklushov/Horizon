@@ -46,6 +46,7 @@ class AIProvider(str, Enum):
     """Supported AI providers."""
     ANTHROPIC = "anthropic"
     OPENAI = "openai"
+    AZURE = "azure"
     ALI = "ali"
     GEMINI = "gemini"
     DOUBAO = "doubao"
@@ -69,6 +70,9 @@ class AIConfig(StrictModel):
     codex_extra_args: List[str] = Field(default_factory=list)
     codex_use_output_last_message: bool = True
     codex_use_json: bool = False
+    # Azure OpenAI specific; required when provider == AZURE
+    azure_endpoint_env: Optional[str] = None
+    api_version: Optional[str] = None
 
 
 class GitHubSourceConfig(StrictModel):

@@ -2,6 +2,7 @@
 
 from __future__ import annotations
 
+import asyncio
 import os
 from unittest.mock import AsyncMock, MagicMock, patch
 
@@ -47,8 +48,7 @@ class TestMiniMaxClientInit:
 
 
 class TestMiniMaxClientComplete:
-    @pytest.mark.asyncio
-    async def test_basic_completion(self, monkeypatch):
+    def test_basic_completion(self, monkeypatch):
         monkeypatch.setenv("MINIMAX_API_KEY", "test-key")
         client = MiniMaxClient(_make_config())
 
@@ -62,7 +62,7 @@ class TestMiniMaxClientComplete:
             client.client.chat.completions, "create", new_callable=AsyncMock
         ) as mock_create:
             mock_create.return_value = mock_response
-            result = await client.complete(system="test", user="hello")
+            result = asyncio.run(client.complete(system="test", user="hello"))
 
         assert result == '{"score": 8}'
         call_kwargs = mock_create.call_args[1]
@@ -70,8 +70,7 @@ class TestMiniMaxClientComplete:
         # response_format should NOT be present (MiniMax doesn't support it)
         assert "response_format" not in call_kwargs
 
-    @pytest.mark.asyncio
-    async def test_temperature_zero_clamped(self, monkeypatch):
+    def test_temperature_zero_clamped(self, monkeypatch):
         monkeypatch.setenv("MINIMAX_API_KEY", "test-key")
         client = MiniMaxClient(_make_config())
 
@@ -85,7 +84,7 @@ class TestMiniMaxClientComplete:
             client.client.chat.completions, "create", new_callable=AsyncMock
         ) as mock_create:
             mock_create.return_value = mock_response
-            await client.complete(system="test", user="hello", temperature=0.0)
+            asyncio.run(client.complete(system="test", user="hello", temperature=0.0))
 
         call_kwargs = mock_create.call_args[1]
         assert call_kwargs["temperature"] > 0
