@@ -1,133 +1,67 @@
-<div align="center">
+# Horizon Brief
 
-# 🌅 Horizon
-
-**Enjoy the News itself. Leave others to Horizon**
+**A fork-friendly briefing layer on top of Horizon.**
 
 [![License](https://img.shields.io/badge/license-MIT-green.svg?style=flat-square)](LICENSE)
 [![uv](https://img.shields.io/endpoint?url=https://raw.githubusercontent.com/astral-sh/uv/main/assets/badge/v0.json&style=flat-square)](https://github.com/astral-sh/uv)
-[![Daily Summary](https://github.com/Thysrael/Horizon/actions/workflows/deploy-docs.yml/badge.svg?style=flat-square)](https://thysrael.github.io/Horizon/)
-[![GitHub commit activity](https://img.shields.io/github/commit-activity/m/Thysrael/Horizon?style=flat-square)](https://github.com/Thysrael/Horizon/commits/main)
-[![PRs Welcome](https://img.shields.io/badge/PRs-welcome-brightgreen.svg?style=flat-square)](http://makeapullrequest.com)
-![Sources Welcome](https://img.shields.io/badge/📡_sources-welcome-f97316?style=flat-square)
-<a href="https://hellogithub.com/repository/Thysrael/Horizon" target="_blank"><img src="https://api.hellogithub.com/v1/widgets/recommend.svg?rid=7a4b606e28e4477998d35851cf4fdddf&claim_uid=rtjnLkYT7ziQJUG&theme=small" alt="Featured｜HelloGitHub" /></a>
-<br>
+[![CI](https://github.com/AntonMiklushov/Horizon/actions/workflows/ci.yml/badge.svg?style=flat-square)](https://github.com/AntonMiklushov/Horizon/actions/workflows/ci.yml)
 
-![Claude](https://img.shields.io/badge/Claude-f0daba?style=flat-square&logo=anthropic&logoColor=black)
-![GPT](https://img.shields.io/badge/GPT-412991?style=flat-square)
-![Gemini](https://img.shields.io/badge/Gemini-8E75B2?style=flat-square&logo=google&logoColor=white)
-![DeepSeek](https://img.shields.io/badge/DeepSeek-0A6DC2?style=flat-square)
-![Doubao](https://img.shields.io/badge/Doubao-00D6C2?style=flat-square)
-![MiniMax](https://img.shields.io/badge/MiniMax-FF6F00?style=flat-square)
-![OpenClaw](https://img.shields.io/badge/OpenClaw-C83232?style=flat-square)
+Horizon Brief is a local-first AI briefing pipeline for collecting sources, scoring relevance, applying evidence-aware source policy, and generating compact briefings. It is intentionally kept as an add-on layer over the original Horizon project: the product name changes in this README, but the runtime package and command surface stay compatible.
 
-📡 Your own AI-powered news radar. Generates daily briefings in English & Chinese. | 构建你专属的 AI 新闻雷达
+## Overview
 
-[📖 Live Demo](https://thysrael.github.io/Horizon/) · [📋 Configuration Guide](https://thysrael.github.io/Horizon/configuration) · [简体中文](README_zh.md)
+Horizon Brief takes a configured set of feeds and community sources, turns them into ranked candidate items, enriches the important ones with context and discussion, and writes the result as Markdown. The fork is tuned for personal briefing workflows, including conservative source handling and Russian personal briefing output, while retaining the broader Horizon pipeline.
 
-</div>
+The project can run fully locally from a checkout, in Docker, through scheduled GitHub Actions, or as an MCP-compatible service for AI assistants. It supports API-based model providers and a local Codex CLI provider for environments where a logged-in Codex session should be used instead of an `OPENAI_API_KEY`.
 
-## Screenshots
+## Relationship to Horizon
 
-<table>
-<tr>
-<td width="50%">
-<p align="center"><strong>Ranked Daily Briefing</strong></p>
-<img src="docs/assets/overview_en.png" alt="Daily Overview" />
-</td>
-<td width="50%">
-<p align="center"><strong>Context, Summary & Discussion</strong></p>
-<img src="docs/assets/one_news_en.png" alt="News Detail" />
-</td>
-</tr>
-</table>
+Horizon Brief is a fork of [Horizon](https://github.com/Thysrael/Horizon). It does not perform a full technical rename in this pass.
 
-<details>
-<summary><strong>More Screenshots</strong></summary>
-<br>
-<table>
-<tr>
-<td width="33.33%">
-<p align="center"><strong>Terminal Output</strong></p>
-<img src="docs/assets/terminal_log.png" alt="Terminal Output" />
-</td>
-<td width="33.33%">
-<p align="center"><strong>Feishu Notification</strong></p>
-<img src="docs/assets/feishu_en.png" alt="Feishu Notification" />
-</td>
-<td width="33.33%">
-<p align="center"><strong>Email Delivery</strong></p>
-<img src="docs/assets/email.png" alt="Email Delivery" />
-</td>
-</tr>
-</table>
-</details>
+- The Python package name remains `horizon`.
+- CLI commands remain `horizon`, `horizon-wizard`, `horizon-web`, `horizon-mcp`, and `horizon-webhook`.
+- Existing import paths remain in place for compatibility.
+- Fork-only product additions live under `src.horizon_ext` to keep upstream rebases practical.
+- Runtime state remains local and ignored: `data/config.json`, generated summaries, run artifacts, subscribers, backups, and secret-like files should not be committed.
 
-## Why Horizon?
+## What Horizon Brief Adds
 
-Good news is scattered; bad news is endless. Horizon gives you a personal first pass over Hacker News, Reddit, Telegram, RSS, and GitHub: it fetches, deduplicates, scores, filters, and enriches stories with background context and community discussion.
-
-But Horizon is not just another summarizer. AI is great at reducing noise, but news still needs human taste: the sources you trust, the comments that change how you read a story, and the hidden gems only people can share. Horizon keeps that human layer in the loop with customizable sources, thresholds, models, languages, delivery channels, comment summaries, and a community source hub.
-
-## Features
-
-- **📡 Watch Your Own Sources** — Track Hacker News, RSS, Reddit, Telegram, Twitter/X, and GitHub releases or user activity in one pipeline
-- **🤖 Turn Noise Into a Reading List** — Score each item from 0-10 with Claude, GPT, Gemini, DeepSeek, Doubao, MiniMax, or any OpenAI-compatible API
-- **🔗 Merge Repeated Stories** — Deduplicate the same story across platforms before it reaches your briefing
-- **🔍 Understand the Background** — Add web-researched context for unfamiliar concepts, companies, projects, and technical terms
-- **💬 Read the Conversation** — Collect and summarize community comments from Hacker News, Reddit, and other supported sources
-- **🌐 Publish in Two Languages** — Generate English and Chinese daily briefings from the same source set
-- **📝 Ship a Daily Site** — Publish generated Markdown as a GitHub Pages daily briefing site
-- **📧 Deliver by Email** — Run a self-hosted SMTP/IMAP newsletter with automatic subscribe and unsubscribe handling
-- **🔔 Push to Chat or Automations** — Send templated results to Feishu/Lark, DingTalk, Slack, Discord, or custom webhook endpoints
-- **🧙 Start From Your Interests** — Use the setup wizard to generate a personalized source configuration
-- **⚙️ Tune the Radar** — Customize sources, thresholds, models, languages, and delivery channels from one JSON config
+- Evidence-aware personal briefing mode with source role classification, claim type metadata, confidence, and evidence strength.
+- Russian personal briefing output by default when personal briefing mode is enabled.
+- Codex CLI provider support for using a local `codex login` session without requiring `OPENAI_API_KEY`.
+- A local web dashboard for configuring and launching runs from the browser.
+- Fork-local rendering, source-quality, MCP, and run-safety helpers isolated under `src.horizon_ext`.
+- Compatibility with the original multi-source Horizon workflow: fetch, deduplicate, score, filter, enrich, summarize, and deliver.
 
 ## How It Works
 
 ```mermaid
-%%{init: {
-  "theme": "base",
-  "themeVariables": {
-    "fontFamily": "ui-sans-serif, system-ui, -apple-system, BlinkMacSystemFont, Segoe UI, sans-serif",
-    "fontSize": "18px",
-    "primaryTextColor": "#2d2a3e",
-    "primaryBorderColor": "#e0dbd3",
-    "lineColor": "#7c7891",
-    "tertiaryColor": "#faf8f5",
-    "clusterBkg": "#f3f0eb",
-    "clusterBorder": "#e0dbd3"
-  }
-}}%%
+%%{init: {"theme": "dark"}}%%
 flowchart LR
-    classDef config fill:#fbbf24,stroke:#d4a017,color:#2d2a3e,stroke-width:1.5px;
-    classDef source fill:#ede7fb,stroke:#6d4aaa,color:#2d2a3e,stroke-width:1.5px;
-    classDef process fill:#ffe8db,stroke:#e0652e,color:#2d2a3e,stroke-width:1.5px;
-    classDef output fill:#f9d7e5,stroke:#be185d,color:#2d2a3e,stroke-width:1.5px;
-
-    config["⚙️ Config<br/>sources, thresholds, models, outputs"]
+    config["Config<br/>sources, thresholds, models, outputs"]
 
     subgraph sources["Configured Sources"]
-        rss["📡 RSS"]
-        hn["📰 Hacker News"]
-        reddit["💬 Reddit"]
-        telegram["✈️ Telegram"]
-        twitter["🐦 Twitter / X"]
-        github["🐙 GitHub"]
+        rss["RSS / Atom"]
+        hn["Hacker News"]
+        reddit["Reddit"]
+        telegram["Telegram"]
+        twitter["Twitter / X"]
+        github["GitHub"]
     end
 
-    fetch["📥 Fetch"]
-    dedup["🧹 Deduplicate"]
-    score["🤖 AI Score & Filter"]
-    enrich["🔎 Enrich"]
-    summary["📝 Summarize"]
+    fetch["Fetch"]
+    dedup["Deduplicate"]
+    policy["Source Policy"]
+    score["AI Score"]
+    enrich["Enrich"]
+    summary["Briefing"]
 
     subgraph outputs["Outputs"]
-        direction TB
-        site["🌐 Pages"]
-        email["📧 Email"]
-        webhook["🔔 Webhooks"]
-        mcp["🧩 MCP"]
+        files["Markdown Files"]
+        site["GitHub Pages"]
+        email["Email"]
+        webhook["Webhooks"]
+        mcp["MCP"]
     end
 
     config --> fetch
@@ -137,89 +71,84 @@ flowchart LR
     telegram --> fetch
     twitter --> fetch
     github --> fetch
-
-    fetch --> dedup --> score --> enrich --> summary
+    fetch --> dedup --> policy --> score --> enrich --> summary
+    config --> policy
     config --> score
     config --> summary
-    config --> outputs
-
+    summary --> files
     summary --> site
     summary --> email
     summary --> webhook
     summary --> mcp
-
-    class config config
-    class rss,hn,reddit,telegram,twitter,github source
-    class fetch,dedup,score,enrich,summary process
-    class site,email,webhook,mcp output
 ```
 
-1. **Define** — Configure sources, thresholds, models, languages, and delivery from one JSON config.
-2. **Fetch** — Pull latest content from all configured sources concurrently.
-3. **Deduplicate** — Merge items pointing to the same story or URL across platforms.
-4. **Score & Filter** — Use AI to rank items and keep only those above your threshold.
-5. **Enrich** — Search the web for background context and collect community discussion for important items.
-6. **Summarize** — Generate a structured Markdown briefing with summaries, tags, and references.
-7. **Deliver** — Publish the result to GitHub Pages, email, webhooks such as Feishu, MCP, or local files.
+1. Configure sources, thresholds, model provider, language, and output channels.
+2. Fetch recent items from enabled sources.
+3. Deduplicate repeated stories across platforms.
+4. Apply source policy and, in personal briefing mode, exclude blocked or unsuitable factual sources before scoring.
+5. Score and filter items with the configured AI provider.
+6. Enrich important items with background context and available community discussion.
+7. Generate Markdown briefings and deliver them through the configured outputs.
 
 ## Quick Start
 
-### 1. Install
-
-**Option A: Local Installation**
+### Local Installation
 
 ```bash
-git clone https://github.com/Thysrael/Horizon.git
-cd horizon
+git clone https://github.com/AntonMiklushov/Horizon.git
+cd Horizon
 
-# Install with uv (recommended)
 uv sync
+```
 
-# Install test/development extras when needed
-uv sync --extra dev
+You can also install the project in editable mode with pip:
 
-# Or with pip
+```bash
 pip install -e .
+```
+
+Install test and development extras when needed:
+
+```bash
+uv sync --extra dev
 ```
 
 `dev` is currently defined as an optional extra in `pyproject.toml`, so use `uv sync --extra dev` for pytest and other development dependencies.
 
-**Option B: Docker**
+On Windows, if the checkout is inside a Nextcloud, OneDrive, or similar synced folder, place uv's environment and cache outside the repository before `uv sync`:
+
+```powershell
+$horizonState = Join-Path $env:LOCALAPPDATA "Horizon"
+$env:UV_PROJECT_ENVIRONMENT = Join-Path $horizonState "uv-env"
+$env:UV_CACHE_DIR = Join-Path $horizonState "uv-cache"
+New-Item -ItemType Directory -Force $horizonState | Out-Null
+uv sync
+```
+
+### Docker
 
 ```bash
-git clone https://github.com/Thysrael/Horizon.git
-cd horizon
+git clone https://github.com/AntonMiklushov/Horizon.git
+cd Horizon
 
-# Configure environment
 cp .env.example .env
 cp data/config.example.json data/config.json
-# Edit .env and data/config.json with your API keys and preferences
 
-# Run with Docker Compose
 docker-compose run --rm horizon
-
-# Or run with custom time window
-docker-compose run --rm horizon --hours 48
 ```
 
-### 2. Configure
+## Configuration
 
-**Option A: Interactive wizard (recommended)**
+Start from the example files and keep local runtime configuration out of git:
 
 ```bash
-uv run horizon-wizard
+cp .env.example .env
+cp data/config.example.json data/config.json
 ```
 
-The wizard asks about your interests (e.g. "LLM inference", "嵌入式", "web security") and auto-generates `data/config.json`.
+For personal briefing mode, the example config already points `personal_briefing.source_policy_file` at `data/config.personal-news.example.json`. Keep private source choices and secrets in `data/config.json`; create a separate private policy file only if your local ignore rules cover it.
 
-**Option B: Manual configuration**
-
-```bash
-cp .env.example .env          # Add your API keys
-cp data/config.example.json data/config.json  # Customize your sources
-```
-
-Minimal manual configuration:
+Minimal API-provider configuration:
 
 ```jsonc
 {
@@ -230,7 +159,10 @@ Minimal manual configuration:
   },
   "sources": {
     "rss": [
-      { "name": "Simon Willison", "url": "https://simonwillison.net/atom/everything/" }
+      {
+        "name": "Simon Willison",
+        "url": "https://simonwillison.net/atom/everything/"
+      }
     ]
   },
   "filtering": {
@@ -239,91 +171,96 @@ Minimal manual configuration:
 }
 ```
 
-For the full reference, see the [Configuration Guide](docs/configuration.md).
+To use a local Codex CLI session instead of API keys, set the provider to `codex_cli` in `data/config.json`. This path uses `codex exec` through the locally authenticated Codex CLI session and does not require `OPENAI_API_KEY`.
 
-### 3. Run
+For the full configuration reference, see [docs/configuration.md](docs/configuration.md). For Codex CLI setup, see [docs/codex_cli_provider.md](docs/codex_cli_provider.md). For personal briefing behavior, see [docs/personal_briefing.md](docs/personal_briefing.md).
 
-#### Local Installation
+## Run Modes
 
-```bash
-uv run horizon           # Run with default 24h window
-uv run horizon --hours 48  # Fetch from last 48 hours
-```
-
-#### With Docker
+Run the default pipeline:
 
 ```bash
-docker-compose run --rm horizon           # Run with default 24h window
-docker-compose run --rm horizon --hours 48  # Fetch from last 48 hours
+uv run horizon
 ```
 
-The generated report will be saved to `data/summaries/`.
+Run with an explicit lookback window:
 
-### 4. Automate (Optional)
+```bash
+uv run horizon --hours 48
+```
 
-Horizon works great as a **GitHub Actions** cron job. See [`.github/workflows/daily-summary.yml`](.github/workflows/daily-summary.yml) for a ready-to-use workflow that generates and deploys your daily briefing to GitHub Pages automatically.
+Generate a configuration interactively:
 
-## Supported Sources
+```bash
+uv run horizon-wizard
+```
 
-| Source | What it fetches | Comments |
-|--------|----------------|----------|
-| **Hacker News** | Top stories by score | Yes (top N comments) |
-| **RSS / Atom** | Any RSS or Atom feed | — |
-| **Reddit** | Subreddits + user posts | Yes (top N comments) |
-| **Telegram** | Public channel messages | — |
-| **Twitter / X** | Tweets from specific users | Yes (top N replies) |
-| **GitHub** | User events & repo releases | — |
+Start the local web dashboard:
 
-## Where Your Briefing Goes
+```bash
+uv run horizon-web
+```
 
-Horizon can publish or deliver the generated briefing in several ways:
+Start the MCP server:
+
+```bash
+uv run horizon-mcp
+```
+
+Send webhook output through the webhook CLI:
+
+```bash
+uv run horizon-webhook
+```
+
+With Docker:
+
+```bash
+docker-compose run --rm horizon
+docker-compose run --rm horizon --hours 48
+```
+
+Generated summaries are written to `data/summaries/`.
+
+## Outputs and Integrations
 
 | Channel | What it does |
-|---------|--------------|
-| **GitHub Pages Daily Site** | Copies generated Markdown into `docs/` so GitHub Pages can publish a daily-updated briefing site |
-| **Email Subscription** | Sends the daily briefing to subscribers and handles subscribe/unsubscribe requests through SMTP/IMAP |
-| **Webhook Notification** | Pushes success or failure results to Feishu/Lark, DingTalk, Slack, Discord, or any custom webhook endpoint |
-| **MCP Server** | Exposes Horizon pipeline steps as tools so AI assistants can fetch, score, filter, enrich, summarize, and run the full workflow |
+| --- | --- |
+| Local Markdown | Saves generated briefings under `data/summaries/`. |
+| GitHub Pages | Copies publishable Markdown into `docs/` for a Jekyll-backed daily briefing site. |
+| Email | Sends briefings through SMTP and handles subscribe or unsubscribe requests through IMAP. |
+| Webhooks | Sends success, failure, overview, or item-level notifications to Feishu/Lark, DingTalk, Slack, Discord, or a custom endpoint. |
+| MCP | Exposes pipeline steps as MCP tools for assistants and MCP-compatible clients. |
+| Local Web Dashboard | Provides a browser UI for basic configuration, run staging, execution, and summary viewing. |
 
-For setup details, see the [Configuration Guide](docs/configuration.md). For MCP tool references and client setup, see [`src/mcp/README.md`](src/mcp/README.md) and [`src/mcp/integration.md`](src/mcp/integration.md).
+Supported source families include RSS/Atom, Hacker News, Reddit, Telegram, Twitter/X, and GitHub user or release activity.
 
 ## Documentation
 
 | Guide | Description |
-|-------|-------------|
-| [Configuration](docs/configuration.md) | AI providers, sources, filtering, email, webhook, GitHub Pages, and MCP setup |
-| [Scoring](docs/scoring.md) | How Horizon evaluates and ranks news items |
-| [Scrapers](docs/scrapers.md) | Source scraper details and extension notes |
-| [MCP Tools](src/mcp/README.md) | Tool reference for MCP-compatible clients |
+| --- | --- |
+| [Configuration](docs/configuration.md) | AI providers, sources, filtering, email, webhook, GitHub Pages, and MCP setup. |
+| [Personal Briefing](docs/personal_briefing.md) | Evidence-aware personal briefing mode and source policy behavior. |
+| [Codex CLI Provider](docs/codex_cli_provider.md) | How to run model calls through a local Codex CLI login. |
+| [Scoring](docs/scoring.md) | How items are evaluated and ranked. |
+| [Scrapers](docs/scrapers.md) | Source scraper details and extension notes. |
+| [MCP Tools](src/mcp/README.md) | Tool reference for MCP-compatible clients. |
+| [Fork Architecture](docs/fork_architecture.md) | How fork-only additions are isolated for easier upstream rebases. |
 
 ## Project Status
 
-Horizon already supports the full daily briefing loop: multi-source collection, AI scoring, deduplication, enrichment, comment summaries, bilingual generation, GitHub Pages publishing, email delivery, webhook delivery, Docker deployment, MCP integration, and the setup wizard.
+Horizon Brief currently supports the full briefing loop: multi-source collection, deduplication, source policy, AI scoring, enrichment, comment summaries, Markdown generation, GitHub Pages publishing, email delivery, webhook delivery, Docker deployment, MCP integration, local web runs, and the setup wizard.
 
-Planned improvements:
-
-- More source types, such as Twitter/X and Discord
-- Custom scoring prompts per source
-- Publish releases on GitHub
-- Publish the package to PyPI for `pip install`
-
-## Contributing
-
-Contributions are welcome! Feel free to open issues or submit pull requests.
-
-### Share Sources
-
-Want to share valuable source discoveries with the Horizon community? Please submit them through **[horizon1123.top](https://horizon1123.top)**.
-
-Great candidates: niche RSS discoveries, active subreddit trends, notable GitHub updates, or Telegram channel highlights in your area of expertise.
+This repository intentionally keeps the original `horizon` package and command names. A deeper rename would require coordinated changes across packaging, CLI entrypoints, documentation, generated filenames, workflows, and tests, and is outside the scope of this README repositioning.
 
 ## Acknowledgements
 
-- Special thanks to [LINUX.DO](https://linux.do/) for providing a promotion platform.
-- Special thanks to [HelloGitHub](https://hellogithub.com/) for valuable guidance and suggestions.
+Horizon Brief builds on the original [Horizon](https://github.com/Thysrael/Horizon) project and keeps its compatibility surface where practical.
 
 ## License
 
 [MIT](LICENSE)
 
-Personal evidence-aware briefing mode - see `docs/personal_briefing.md`.
+## Generative Modification Notice
+
+Generative modification notice: Horizon Brief is a generative modification of Horizon, shaped and documented with assistance from Codex.

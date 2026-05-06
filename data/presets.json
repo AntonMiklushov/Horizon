@@ -273,6 +273,56 @@
           "config": { "name": "Quanta Magazine", "url": "https://api.quantamagazine.org/feed/", "category": "science" }
         }
       ]
+    },
+    {
+      "id": "public-news",
+      "name": "Public News / Institutions",
+      "name_zh": "公共新闻 / 机构来源",
+      "keywords": ["world", "business", "economy", "policy", "science", "space", "markets", "regulation"],
+      "sources": [
+        {
+          "type": "rss",
+          "description": "BBC World News official feed",
+          "description_zh": "BBC 世界新闻官方 RSS",
+          "tags": ["world", "fact-layer"],
+          "config": { "name": "BBC World", "url": "https://feeds.bbci.co.uk/news/world/rss.xml", "category": "world" }
+        },
+        {
+          "type": "rss",
+          "description": "BBC Business official feed",
+          "description_zh": "BBC 商业新闻官方 RSS",
+          "tags": ["business", "economy"],
+          "config": { "name": "BBC Business", "url": "https://feeds.bbci.co.uk/news/business/rss.xml", "category": "world_economy" }
+        },
+        {
+          "type": "rss",
+          "description": "The Guardian World official feed",
+          "description_zh": "The Guardian 世界新闻 RSS",
+          "tags": ["world", "context"],
+          "config": { "name": "The Guardian World", "url": "https://www.theguardian.com/world/rss", "category": "world" }
+        },
+        {
+          "type": "rss",
+          "description": "Federal Reserve official press releases",
+          "description_zh": "美联储官方新闻稿",
+          "tags": ["central-bank", "official"],
+          "config": { "name": "Federal Reserve", "url": "https://www.federalreserve.gov/feeds/press_all.xml", "category": "world_economy" }
+        },
+        {
+          "type": "rss",
+          "description": "European Central Bank official feed",
+          "description_zh": "欧洲央行官方 RSS",
+          "tags": ["central-bank", "official"],
+          "config": { "name": "European Central Bank", "url": "https://www.ecb.europa.eu/rss/press.html", "category": "world_economy" }
+        },
+        {
+          "type": "rss",
+          "description": "NASA breaking news",
+          "description_zh": "NASA 新闻",
+          "tags": ["science", "space", "official"],
+          "config": { "name": "NASA Breaking News", "url": "https://www.nasa.gov/news-release/feed/", "category": "science" }
+        }
+      ]
     }
   ]
 }

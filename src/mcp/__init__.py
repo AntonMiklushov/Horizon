@@ -1,4 +1,4 @@
-"""Horizon MCP package."""
+"""Horizon Brief MCP package."""
 
 __all__ = ["__version__"]
 

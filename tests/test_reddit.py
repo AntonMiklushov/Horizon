@@ -50,7 +50,7 @@ def _listing_payload() -> dict:
     }
 
 
-def test_reddit_fetch_uses_browser_like_headers():
+def test_reddit_fetch_uses_descriptive_user_agent():
     requests = []
 
     def handler(request: httpx.Request) -> httpx.Response:
@@ -68,6 +68,28 @@ def test_reddit_fetch_uses_browser_like_headers():
     assert requests[0].headers["user-agent"] == REDDIT_HEADERS["User-Agent"]
     assert requests[0].headers["accept-language"] == REDDIT_HEADERS["Accept-Language"]
     assert requests[0].headers["referer"] == REDDIT_HEADERS["Referer"]
+
+
+def test_reddit_uses_oauth_when_credentials_are_configured(monkeypatch):
+    monkeypatch.setenv("REDDIT_CLIENT_ID", "client")
+    monkeypatch.setenv("REDDIT_CLIENT_SECRET", "secret")
+    requests = []
+
+    def handler(request: httpx.Request) -> httpx.Response:
+        requests.append(request)
+        if request.url.path == "/api/v1/access_token":
+            return httpx.Response(200, json={"access_token": "token"})
+        assert request.url.host == "oauth.reddit.com"
+        return httpx.Response(200, json={"data": {"children": []}})
+
+    transport = httpx.MockTransport(handler)
+    client = httpx.AsyncClient(transport=transport)
+    scraper = RedditScraper(_make_config(fetch_comments=0), client)
+
+    asyncio.run(scraper.fetch(datetime.now(timezone.utc) - timedelta(hours=1)))
+    asyncio.run(client.aclose())
+
+    assert requests[1].headers["authorization"] == "Bearer token"
 
 
 def test_reddit_comment_403_degrades_to_post_without_comments():

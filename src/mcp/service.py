@@ -1,10 +1,11 @@
-"""Application service for staged Horizon pipeline execution."""
+"""Application service for staged Horizon Brief pipeline execution."""
 
 from __future__ import annotations
 
 import os
 from dataclasses import dataclass
 from datetime import datetime, timedelta, timezone
+from inspect import signature
 from pathlib import Path
 from typing import Any
 
@@ -25,6 +26,13 @@ from .horizon_adapter import (
 from .run_store import RunStore
 from ..services.webhook import WebhookNotifier
 from ..models import AIProvider
+from ..horizon_ext.personal import (
+    drop_items_flagged_by_critic,
+    EvidenceChecker,
+    select_personal_important_items,
+)
+from ..horizon_ext.mcp import local_only_config, normalize_run_instructions, redact_runtime_payload
+from ..horizon_ext.pipeline import apply_source_diversity
 
 
 def _default_runs_root() -> Path:
@@ -156,7 +164,7 @@ class HorizonPipelineService:
             "config_path": str(ctx.config_path),
             "selected_sources": selected_sources,
             "unknown_sources": unknown_sources,
-            "config": ctx.config.model_dump(mode="json"),
+            "config": self._redact_config(ctx.config.model_dump(mode="json")),
         }
 
     async def validate_config(
@@ -222,6 +230,8 @@ class HorizonPipelineService:
         horizon_path: str | None = None,
         config_path: str | None = None,
         sources: list[str] | None = None,
+        run_instructions: str | None = None,
+        local_only: bool = False,
     ) -> dict[str, Any]:
         if hours <= 0:
             raise HorizonMcpError(code="HZ_INVALID_INPUT", message="hours must be greater than 0.")
@@ -230,6 +240,7 @@ class HorizonPipelineService:
             horizon_path=horizon_path,
             config_path=config_path,
             sources=sources,
+            local_only=local_only,
         )
 
         storage = make_storage(ctx.runtime, ctx.config_path)
@@ -239,7 +250,12 @@ class HorizonPipelineService:
         since = datetime.now(timezone.utc) - timedelta(hours=hours)
 
         raw_items = await orchestrator.fetch_all_sources(since)
-        merged_items = orchestrator.merge_cross_source_duplicates(raw_items)
+        personal_excluded: list[dict[str, str]] = []
+        candidate_items = raw_items
+        if self._personal_briefing_enabled(ctx.config):
+            orchestrator._classify_personal_source_metadata(raw_items)
+            candidate_items, personal_excluded = orchestrator._prefilter_personal_candidates(raw_items)
+        merged_items = orchestrator.merge_cross_source_duplicates(candidate_items)
 
         self.run_store.save_items(run_id, "raw", items_to_dicts(merged_items))
         meta = self.run_store.update_meta(
@@ -252,7 +268,11 @@ class HorizonPipelineService:
                 "source_selection": selected_sources,
                 "unknown_sources": unknown_sources,
                 "raw_count_before_merge": len(raw_items),
+                "raw_count_after_personal_prefilter": len(candidate_items),
                 "raw_count": len(merged_items),
+                "personal_prefilter_excluded": personal_excluded[:50],
+                "run_instructions": self._normalize_instructions(run_instructions),
+                "local_only": local_only,
             },
         )
 
@@ -272,22 +292,28 @@ class HorizonPipelineService:
         horizon_path: str | None = None,
         config_path: str | None = None,
         max_items: int | None = None,
+        run_instructions: str | None = None,
+        local_only: bool = False,
     ) -> dict[str, Any]:
         items, ctx = self._load_stage_items(
             run_id=run_id,
             stage=source_stage,
             horizon_path=horizon_path,
             config_path=config_path,
+            local_only=local_only,
         )
 
         if not items:
             raise HorizonMcpError(code="HZ_EMPTY_INPUT", message="No items available for scoring.")
         scored_input, limit_meta = self._limit_items(items, max_items, "scoring")
+        effective_instructions = self._run_instructions(run_id, run_instructions)
 
         ai_client = ctx.runtime.create_ai_client(ctx.config.ai)
-        analyzer = ctx.runtime.ContentAnalyzer(
+        analyzer = self._make_content_analyzer(
+            ctx.runtime.ContentAnalyzer,
             ai_client,
             personal_briefing_mode=self._personal_briefing_enabled(ctx.config),
+            run_instructions=effective_instructions,
         )
         scored_items = await analyzer.analyze_batch(scored_input)
 
@@ -304,6 +330,8 @@ class HorizonPipelineService:
                 **limit_meta,
                 "scored_threshold": score_threshold,
                 "scored_above_threshold": len(above_threshold),
+                "run_instructions": effective_instructions,
+                "local_only": local_only,
             },
         )
 
@@ -327,17 +355,35 @@ class HorizonPipelineService:
         topic_dedup: bool = True,
         horizon_path: str | None = None,
         config_path: str | None = None,
+        run_instructions: str | None = None,
+        local_only: bool = False,
     ) -> dict[str, Any]:
         items, ctx = self._load_stage_items(
             run_id=run_id,
             stage=source_stage,
             horizon_path=horizon_path,
             config_path=config_path,
+            local_only=local_only,
         )
 
         effective_threshold = threshold if threshold is not None else ctx.config.filtering.ai_score_threshold
+        effective_instructions = self._run_instructions(run_id, run_instructions)
 
-        important_items = [item for item in items if item.ai_score and item.ai_score >= effective_threshold]
+        personal_excluded: list[dict[str, str]] = []
+        if self._personal_briefing_enabled(ctx.config):
+            storage = make_storage(ctx.runtime, ctx.config_path)
+            orchestrator = make_orchestrator(ctx.runtime, ctx.config, storage)
+            orchestrator._classify_personal_source_metadata(items)
+            important_items, personal_excluded = select_personal_important_items(
+                items,
+                checker=EvidenceChecker(ctx.config.filtering.time_window_hours),
+                min_importance=ctx.config.personal_briefing.min_importance,
+                min_importance_priority_topics=ctx.config.personal_briefing.min_importance_priority_topics,
+                require_dates=ctx.config.personal_briefing.require_dates,
+                priority_topics=self._priority_topics(ctx.config),
+            )
+        else:
+            important_items = [item for item in items if item.ai_score and item.ai_score >= effective_threshold]
         important_items.sort(key=lambda x: x.ai_score or 0, reverse=True)
 
         before_dedup = len(important_items)
@@ -345,6 +391,23 @@ class HorizonPipelineService:
             storage = make_storage(ctx.runtime, ctx.config_path)
             orchestrator = make_orchestrator(ctx.runtime, ctx.config, storage)
             important_items = await orchestrator.merge_topic_duplicates(important_items)
+            if self._personal_briefing_enabled(ctx.config):
+                important_items, retracked = select_personal_important_items(
+                    important_items,
+                    checker=EvidenceChecker(ctx.config.filtering.time_window_hours),
+                    min_importance=ctx.config.personal_briefing.min_importance,
+                    min_importance_priority_topics=ctx.config.personal_briefing.min_importance_priority_topics,
+                    require_dates=ctx.config.personal_briefing.require_dates,
+                    priority_topics=self._priority_topics(ctx.config),
+                )
+                personal_excluded.extend(retracked)
+        after_topic_dedup = len(important_items)
+
+        important_items, diversity_excluded = apply_source_diversity(
+            important_items,
+            max_items_per_source=ctx.config.filtering.max_items_per_source,
+        )
+        personal_excluded.extend(diversity_excluded)
 
         self.run_store.save_items(run_id, "filtered", items_to_dicts(important_items))
         meta = self.run_store.update_meta(
@@ -353,7 +416,11 @@ class HorizonPipelineService:
                 "filtered_count": len(important_items),
                 "filter_threshold": effective_threshold,
                 "topic_dedup_enabled": topic_dedup,
-                "topic_dedup_removed": before_dedup - len(important_items),
+                "topic_dedup_removed": before_dedup - after_topic_dedup,
+                "source_diversity_excluded": diversity_excluded[:50],
+                "personal_filter_excluded": personal_excluded[:50],
+                "run_instructions": effective_instructions,
+                "local_only": local_only,
             },
         )
 
@@ -361,7 +428,7 @@ class HorizonPipelineService:
             "run_id": run_id,
             "kept": len(important_items),
             "threshold": effective_threshold,
-            "removed_by_topic_dedup": before_dedup - len(important_items),
+            "removed_by_topic_dedup": before_dedup - after_topic_dedup,
             "source_counts": get_source_counts(important_items),
             "artifact": str((self.run_store.run_dir(run_id) / "filtered_items.json").resolve()),
             "meta": meta,
@@ -374,12 +441,14 @@ class HorizonPipelineService:
         horizon_path: str | None = None,
         config_path: str | None = None,
         max_items: int | None = None,
+        local_only: bool = False,
     ) -> dict[str, Any]:
         items, ctx = self._load_stage_items(
             run_id=run_id,
             stage=source_stage,
             horizon_path=horizon_path,
             config_path=config_path,
+            local_only=local_only,
         )
 
         if not items:
@@ -404,6 +473,7 @@ class HorizonPipelineService:
                 "enrichment_source_count": len(items),
                 **limit_meta,
                 "citation_count": citation_count,
+                "local_only": local_only,
             },
         )
 
@@ -427,6 +497,7 @@ class HorizonPipelineService:
         config_path: str | None = None,
         save_to_horizon_data: bool = False,
         max_items: int | None = None,
+        local_only: bool = False,
     ) -> dict[str, Any]:
         stage = source_stage or self._pick_summary_stage(run_id)
         items, ctx = self._load_stage_items(
@@ -434,6 +505,7 @@ class HorizonPipelineService:
             stage=stage,
             horizon_path=horizon_path,
             config_path=config_path,
+            local_only=local_only,
         )
         summary_items, limit_meta = self._limit_items(items, max_items, "summary")
 
@@ -447,8 +519,29 @@ class HorizonPipelineService:
             if critic_config.enabled:
                 critic = ctx.runtime.run_briefing_critic(summary, summary_items)
                 if (not critic.passed) and critic_config.auto_revise_once:
-                    summary += "\n\n## Audit warnings\n" + "\n".join(
+                    revised_items = drop_items_flagged_by_critic(summary_items, critic)
+                    if len(revised_items) < len(summary_items):
+                        summary_items = revised_items
+                        summary = renderer.render(date_str, summary_items, tracked=[])
+                        critic = ctx.runtime.run_briefing_critic(summary, summary_items)
+                if not critic.passed:
+                    failed = summary + "\n\n## Предупреждения аудита\n" + "\n".join(
                         [f"- {issue}" for issue in critic.critical_issues]
+                    )
+                    failed_path = self.run_store.save_summary(run_id, f"{language}-audit-failed", failed)
+                    self.run_store.update_meta(
+                        run_id,
+                        {
+                            "summary_language": language,
+                            "summary_audit_failed": True,
+                            "summary_audit_artifact": str(failed_path.resolve()),
+                            "summary_audit_issues": critic.critical_issues,
+                        },
+                    )
+                    raise HorizonMcpError(
+                        code="HZ_CRITIC_FAILED",
+                        message="Personal briefing failed the deterministic critic.",
+                        details={"run_id": run_id, "language": language, "artifact": str(failed_path.resolve())},
                     )
         else:
             summarizer = ctx.runtime.DailySummarizer()
@@ -473,6 +566,7 @@ class HorizonPipelineService:
             "summary_source_count": len(items),
             "summary_items_used": len(summary_items),
             **limit_meta,
+            "local_only": local_only,
         }
         if published_path:
             summary_meta["summary_published_path"] = str(Path(published_path).resolve())
@@ -495,6 +589,7 @@ class HorizonPipelineService:
     async def run_pipeline(
         self,
         hours: int = 24,
+        run_id: str | None = None,
         languages: list[str] | None = None,
         threshold: float | None = None,
         horizon_path: str | None = None,
@@ -505,12 +600,17 @@ class HorizonPipelineService:
         save_to_horizon_data: bool = False,
         max_raw_items: int | None = None,
         max_filtered_items: int | None = None,
+        run_instructions: str | None = None,
+        local_only: bool = False,
     ) -> dict[str, Any]:
         fetch_result = await self.fetch_items(
             hours=hours,
+            run_id=run_id,
             horizon_path=horizon_path,
             config_path=config_path,
             sources=sources,
+            run_instructions=run_instructions,
+            local_only=local_only,
         )
         run_id = fetch_result["run_id"]
 
@@ -519,6 +619,8 @@ class HorizonPipelineService:
             horizon_path=horizon_path,
             config_path=config_path,
             max_items=max_raw_items,
+            run_instructions=run_instructions,
+            local_only=local_only,
         )
 
         filter_result = await self.filter_items(
@@ -527,6 +629,8 @@ class HorizonPipelineService:
             topic_dedup=topic_dedup,
             horizon_path=horizon_path,
             config_path=config_path,
+            run_instructions=run_instructions,
+            local_only=local_only,
         )
 
         enrich_result: dict[str, Any] | None = None
@@ -538,6 +642,7 @@ class HorizonPipelineService:
                 horizon_path=horizon_path,
                 config_path=config_path,
                 max_items=max_filtered_items,
+                local_only=local_only,
             )
             stage_for_summary = "enriched"
 
@@ -545,8 +650,15 @@ class HorizonPipelineService:
             horizon_path=horizon_path,
             config_path=config_path,
             sources=sources,
+            local_only=local_only,
         )
         final_languages = languages if languages else list(ctx.config.ai.languages)
+        if not languages and self._personal_briefing_enabled(ctx.config):
+            personal = ctx.config.personal_briefing
+            if not personal.generate_standard_summaries:
+                final_languages = [personal.language]
+            elif personal.language not in final_languages:
+                final_languages.append(personal.language)
 
         summaries = []
         for lang in final_languages:
@@ -556,8 +668,9 @@ class HorizonPipelineService:
                 source_stage=stage_for_summary,
                 horizon_path=horizon_path,
                 config_path=config_path,
-                save_to_horizon_data=save_to_horizon_data,
+                save_to_horizon_data=False if local_only else save_to_horizon_data,
                 max_items=max_filtered_items if not enrich else None,
+                local_only=local_only,
             )
             summaries.append(summary_result)
 
@@ -572,6 +685,8 @@ class HorizonPipelineService:
                 "max_raw_items": max_raw_items,
                 "max_filtered_items": max_filtered_items,
             },
+            "run_instructions": self._normalize_instructions(run_instructions),
+            "local_only": local_only,
             "meta": self.run_store.load_meta(run_id),
         }
 
@@ -580,12 +695,15 @@ class HorizonPipelineService:
         horizon_path: str | None,
         config_path: str | None,
         sources: list[str] | None,
+        local_only: bool = False,
     ) -> tuple[PipelineContext, list[str], list[str]]:
         resolved_horizon = resolve_horizon_path(horizon_path)
         runtime = load_runtime(resolved_horizon)
         resolved_config = resolve_config_path(resolved_horizon, config_path)
         config = load_config(runtime, resolved_config)
         effective_config, selected_sources, unknown_sources = apply_source_filter(config, sources)
+        if local_only:
+            effective_config = self._local_only_config(effective_config)
 
         return (
             PipelineContext(
@@ -604,8 +722,14 @@ class HorizonPipelineService:
         stage: str,
         horizon_path: str | None,
         config_path: str | None,
+        local_only: bool = False,
     ) -> tuple[list[Any], PipelineContext]:
-        ctx, _, _ = self._build_context(horizon_path=horizon_path, config_path=config_path, sources=None)
+        ctx, _, _ = self._build_context(
+            horizon_path=horizon_path,
+            config_path=config_path,
+            sources=None,
+            local_only=local_only,
+        )
         try:
             payload = self.run_store.load_items(run_id, stage)
         except FileNotFoundError as exc:
@@ -657,12 +781,50 @@ class HorizonPipelineService:
         return bool(getattr(personal, "enabled", False))
 
     @staticmethod
+    def _priority_topics(config: Any) -> set[str]:
+        personal = getattr(config, "personal_briefing", None)
+        return {str(topic) for topic in getattr(personal, "priority_topics", [])}
+
+    @staticmethod
     def _uses_personal_summary(config: Any, language: str) -> bool:
         personal = getattr(config, "personal_briefing", None)
         return bool(
             getattr(personal, "enabled", False)
             and language == getattr(personal, "language", None)
         )
+
+    @staticmethod
+    def _normalize_instructions(run_instructions: str | None) -> str:
+        return normalize_run_instructions(run_instructions)
+
+    def _run_instructions(self, run_id: str, explicit: str | None) -> str:
+        normalized = self._normalize_instructions(explicit)
+        if normalized:
+            return normalized
+        try:
+            return self._normalize_instructions(self.run_store.load_meta(run_id).get("run_instructions"))
+        except Exception:
+            return ""
+
+    @staticmethod
+    def _make_content_analyzer(
+        analyzer_cls: Any,
+        ai_client: Any,
+        personal_briefing_mode: bool,
+        run_instructions: str,
+    ) -> Any:
+        kwargs = {"personal_briefing_mode": personal_briefing_mode}
+        try:
+            params = signature(analyzer_cls).parameters
+        except (TypeError, ValueError):
+            params = {}
+        if "run_instructions" in params:
+            kwargs["run_instructions"] = run_instructions
+        return analyzer_cls(ai_client, **kwargs)
+
+    @staticmethod
+    def _local_only_config(config: Any) -> Any:
+        return local_only_config(config)
 
     @staticmethod
     def _limit_items(items: list[Any], max_items: int | None, stage_name: str) -> tuple[list[Any], dict[str, Any]]:
@@ -682,6 +844,10 @@ class HorizonPipelineService:
             f"{stage_name}_limit": max_items,
             f"{stage_name}_skipped_by_limit": max(0, len(items) - len(limited)),
         }
+
+    @classmethod
+    def _redact_config(cls, value: Any) -> Any:
+        return redact_runtime_payload(value)
 
     async def send_webhook(
         self,
@@ -717,7 +883,7 @@ class HorizonPipelineService:
             "all_items": all_items,
             "result": result,
             "timestamp": str(int(datetime.now(timezone.utc).timestamp())),
-            "message_title": f"Horizon {date} webhook",
+            "message_title": f"Horizon Brief {date} webhook",
             "message_kind": "manual",
             "summary": summary,
         }

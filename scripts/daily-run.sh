@@ -16,8 +16,8 @@ echo "$LOG_PREFIX Starting Horizon daily run..."
 # 1. Pull latest code
 git pull --quiet origin main
 
-# 2. Install/update dependencies
-uv sync --quiet
+# 2. Install/update dependencies from the committed lockfile
+uv sync --frozen --quiet
 
 # 3. Run Horizon
 uv run horizon --hours 24
@@ -29,7 +29,10 @@ echo "$LOG_PREFIX Deploying to gh-pages..."
 TMPDIR=$(mktemp -d)
 trap "rm -rf $TMPDIR" EXIT
 
-git fetch origin gh-pages:gh-pages 2>/dev/null || git checkout --orphan gh-pages && git checkout main
+if ! git fetch origin gh-pages:gh-pages 2>/dev/null; then
+  git checkout --orphan gh-pages
+  git checkout main
+fi
 
 git worktree add "$TMPDIR" gh-pages
 cp -r docs/* "$TMPDIR/"

@@ -128,7 +128,7 @@ def test_filter_items_uses_public_topic_dedup_api(tmp_path: Path, monkeypatch) -
             SimpleNamespace(
                 runtime=SimpleNamespace(),
                 config_path=tmp_path / "config.json",
-                config=SimpleNamespace(filtering=SimpleNamespace(ai_score_threshold=7.0)),
+                config=SimpleNamespace(filtering=SimpleNamespace(ai_score_threshold=7.0, max_items_per_source=5)),
             ),
         ),
     )
@@ -148,6 +148,71 @@ def test_filter_items_uses_public_topic_dedup_api(tmp_path: Path, monkeypatch) -
     assert result["kept"] == 1
     assert result["removed_by_topic_dedup"] == 1
     assert service.run_store.load_items("run-topic-dedup", "filtered")[0]["id"] == "item-1"
+
+
+def test_filter_items_applies_personal_evidence_gate(tmp_path: Path, monkeypatch) -> None:
+    service = HorizonPipelineService(runs_root=tmp_path / "mcp-runs")
+    service.run_store.create_run("run-personal-gate")
+    good = make_item("good", score=9.0)
+    good.metadata.update({"source_role": "fact_layer", "topic": "world", "include": True, "confidence": "medium"})
+    missing_date = make_item("missing-date", score=9.0)
+    missing_date.published_at = None
+    missing_date.metadata.update({"source_role": "fact_layer", "topic": "world", "include": True, "confidence": "medium"})
+
+    monkeypatch.setattr(
+        service,
+        "_load_stage_items",
+        lambda **kwargs: (
+            [good, missing_date],
+            SimpleNamespace(
+                runtime=SimpleNamespace(),
+                config_path=tmp_path / "config.json",
+                config=SimpleNamespace(
+                        filtering=SimpleNamespace(ai_score_threshold=7.0, time_window_hours=24, max_items_per_source=5),
+                    personal_briefing=SimpleNamespace(
+                        enabled=True,
+                        require_dates=True,
+                        min_importance=7.0,
+                        min_importance_priority_topics=6.5,
+                    ),
+                ),
+            ),
+        ),
+    )
+    monkeypatch.setattr("src.mcp.service.make_storage", lambda runtime, config_path: object())
+
+    class FakeOrchestrator:
+        def _classify_personal_source_metadata(self, items):  # type: ignore[no-untyped-def]
+            return None
+
+        async def merge_topic_duplicates(self, items):  # type: ignore[no-untyped-def]
+            return items
+
+    monkeypatch.setattr(
+        "src.mcp.service.make_orchestrator",
+        lambda runtime, config, storage: FakeOrchestrator(),
+    )
+
+    result = asyncio.run(service.filter_items(run_id="run-personal-gate", topic_dedup=True))
+
+    assert result["kept"] == 1
+    assert service.run_store.load_items("run-personal-gate", "filtered")[0]["id"] == "good"
+    assert result["meta"]["personal_filter_excluded"][0]["reason"] == "missing publication date"
+
+
+def test_effective_config_redacts_sensitive_fields() -> None:
+    redacted = HorizonPipelineService._redact_config(
+        {
+            "ai": {"api_key_env": "OPENAI_API_KEY"},
+            "email": {"email_address": "me@example.com", "password_env": "EMAIL_PASSWORD"},
+            "webhook": {"headers": "Authorization: Bearer secret", "request_body": {"token": "abc"}},
+        }
+    )
+
+    assert redacted["ai"]["api_key_env"] == "<redacted>"
+    assert redacted["email"]["email_address"] == "<redacted>"
+    assert redacted["webhook"]["headers"] == "<redacted>"
+    assert redacted["webhook"]["request_body"] == "<redacted>"
 
 
 def test_score_items_limit_is_optional_and_recorded(tmp_path: Path, monkeypatch) -> None:

@@ -10,9 +10,14 @@ from ..models import Config
 class StorageManager:
     """Manages file-based storage for configuration and state."""
 
-    def __init__(self, data_dir: str = "data"):
-        self.data_dir = Path(data_dir)
-        self.config_path = self.data_dir / "config.json"
+    def __init__(self, data_dir: str = "data", config_path: str | None = None):
+        if config_path:
+            self.config_path = Path(config_path).expanduser().resolve()
+            self.data_dir = Path(data_dir).expanduser().resolve() if data_dir else self.config_path.parent
+        else:
+            self.data_dir = Path(data_dir).expanduser().resolve()
+            self.config_path = self.data_dir / "config.json"
+        self.root_dir = self.data_dir.parent
         self.summaries_dir = self.data_dir / "summaries"
 
         self.data_dir.mkdir(parents=True, exist_ok=True)
@@ -57,6 +62,30 @@ class StorageManager:
             f.write(markdown)
 
         return filepath
+
+    def save_summary_artifact(self, date: str, content: str, language: str = "en", extension: str = "html") -> Path:
+        """Save a rendered non-Markdown summary artifact."""
+        safe_extension = extension.lstrip(".")
+        filename = f"horizon-{date}-{language}.{safe_extension}"
+        filepath = self.summaries_dir / filename
+
+        with open(filepath, "w", encoding="utf-8") as f:
+            f.write(content)
+
+        return filepath
+
+    def resolve_runtime_path(self, path: str | Path) -> Path:
+        """Resolve runtime paths relative to the loaded config location."""
+        candidate = Path(path).expanduser()
+        if candidate.is_absolute():
+            return candidate.resolve()
+
+        root_relative = (self.root_dir / candidate).resolve()
+        data_relative = (self.data_dir / candidate).resolve()
+        normalized = str(candidate).replace("\\", "/")
+        if root_relative.exists() or normalized.startswith("data/"):
+            return root_relative
+        return data_relative
 
     def load_subscribers(self) -> list:
         """Loads the list of email subscribers."""

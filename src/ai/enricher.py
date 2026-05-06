@@ -10,6 +10,7 @@ import re
 import sys
 import os
 from typing import List, Optional
+from pydantic import ValidationError
 from tenacity import retry, stop_after_attempt, wait_exponential
 from rich.progress import Progress, SpinnerColumn, BarColumn, TextColumn, MofNCompleteColumn
 from ddgs import DDGS
@@ -19,6 +20,7 @@ from .prompts import (
     CONCEPT_EXTRACTION_SYSTEM, CONCEPT_EXTRACTION_USER,
     CONTENT_ENRICHMENT_SYSTEM, CONTENT_ENRICHMENT_USER,
 )
+from .schemas import EnrichmentResult
 from .utils import parse_json_response
 from ..models import ContentItem
 
@@ -26,8 +28,9 @@ from ..models import ContentItem
 class ContentEnricher:
     """Enriches high-scoring content items with background knowledge."""
 
-    def __init__(self, ai_client: AIClient):
+    def __init__(self, ai_client: AIClient, verbose_reporter=None):
         self.client = ai_client
+        self.verbose_reporter = verbose_reporter
 
     async def enrich_batch(self, items: List[ContentItem]) -> None:
         """Enrich items in-place with background knowledge.
@@ -35,21 +38,52 @@ class ContentEnricher:
         Args:
             items: Content items to enrich (modified in-place)
         """
+        self._verbose_event(
+            "llm.enrichment.mode",
+            items=len(items),
+            expected_llm_calls=len(items) * 2,
+            **self._client_meta(),
+        )
+        totals = {"queries": 0, "search_results": 0, "enriched": 0, "failed": 0}
         with Progress(
             SpinnerColumn(),
             TextColumn("[progress.description]{task.description}"),
             BarColumn(),
             MofNCompleteColumn(),
+            console=self._progress_console(),
             transient=True,
         ) as progress:
             task = progress.add_task("Enriching", total=len(items))
 
-            for item in items:
+            for index, item in enumerate(items):
+                progress.update(task, description=f"Enriching item {index + 1}/{len(items)}", refresh=True)
                 try:
-                    await self._enrich_item(item)
+                    self._verbose_event("llm.enrichment.item", index=index + 1, total=len(items), status="calling")
+                    stats = await self._enrich_item(item)
+                    self._verbose_event(
+                        "llm.enrichment.item",
+                        index=index + 1,
+                        total=len(items),
+                        status="completed",
+                        queries=stats.get("queries", 0),
+                        search_results=stats.get("search_results", 0),
+                        enriched=bool(stats.get("enriched")),
+                    )
+                    totals["queries"] += int(stats.get("queries", 0))
+                    totals["search_results"] += int(stats.get("search_results", 0))
+                    totals["enriched"] += 1 if stats.get("enriched") else 0
                 except Exception as e:
+                    totals["failed"] += 1
+                    self._verbose_event(
+                        "llm.enrichment.item",
+                        index=index + 1,
+                        total=len(items),
+                        status="failed",
+                        error=type(e).__name__,
+                    )
                     print(f"Error enriching item {item.id}: {e}")
-                progress.advance(task)
+                progress.update(task, advance=1, refresh=True)
+        self._verbose_event("llm.enrichment.result", **totals)
 
     async def _web_search(self, query: str, max_results: int = 3) -> list:
         """Search the web for context via DuckDuckGo.
@@ -117,7 +151,7 @@ class ContentEnricher:
         stop=stop_after_attempt(3),
         wait=wait_exponential(min=2, max=10)
     )
-    async def _enrich_item(self, item: ContentItem) -> None:
+    async def _enrich_item(self, item: ContentItem) -> dict:
         """Enrich a single item with background knowledge.
 
         Steps:
@@ -180,13 +214,18 @@ class ContentEnricher:
             # Gracefully degrade: skip enrichment instead of raising
             # (raising would trigger retries that won't help with a parse error)
             print(f"Warning: could not parse enrichment response for {item.id}, skipping enrichment")
-            return
+            return {"queries": len(queries), "search_results": len(all_results), "enriched": False}
+
+        try:
+            result = EnrichmentResult.model_validate(result).model_dump()
+        except ValidationError as exc:
+            print(f"Warning: invalid enrichment response for {item.id}: {exc}")
+            return {"queries": len(queries), "search_results": len(all_results), "enriched": False}
 
         # Combine structured sub-fields into per-language detailed_summary
         for lang in ("en", "zh"):
             if result.get(f"title_{lang}"):
-                val = result[f"title_{lang}"]
-                item.metadata[f"title_{lang}"] = val.get("text") or str(val) if isinstance(val, dict) else str(val)
+                item.metadata[f"title_{lang}"] = str(result[f"title_{lang}"])
 
             parts = []
             for field in ("whats_new", "why_it_matters", "key_details"):
@@ -197,12 +236,10 @@ class ContentEnricher:
                 item.metadata[f"detailed_summary_{lang}"] = " ".join(parts)
 
             if result.get(f"background_{lang}"):
-                val = result[f"background_{lang}"]
-                item.metadata[f"background_{lang}"] = val.get("text") or str(val) if isinstance(val, dict) else str(val)
+                item.metadata[f"background_{lang}"] = str(result[f"background_{lang}"])
 
             if result.get(f"community_discussion_{lang}"):
-                val = result[f"community_discussion_{lang}"]
-                item.metadata[f"community_discussion_{lang}"] = val.get("text") or str(val) if isinstance(val, dict) else str(val)
+                item.metadata[f"community_discussion_{lang}"] = str(result[f"community_discussion_{lang}"])
 
         # Store citation sources — only URLs that actually came from our search results
         if result.get("sources") and available_urls:
@@ -218,3 +255,20 @@ class ContentEnricher:
         item.metadata["detailed_summary"] = item.metadata.get("detailed_summary_en", "")
         item.metadata["background"] = item.metadata.get("background_en", "")
         item.metadata["community_discussion"] = item.metadata.get("community_discussion_en", "")
+        return {"queries": len(queries), "search_results": len(all_results), "enriched": True}
+
+    def _verbose_event(self, name: str, **fields) -> None:
+        if self.verbose_reporter is not None:
+            self.verbose_reporter.event(name, **fields)
+
+    def _progress_console(self):
+        return getattr(self.verbose_reporter, "console", None)
+
+    def _client_meta(self) -> dict:
+        config = getattr(self.client, "config", None)
+        provider = getattr(config, "provider", "unknown")
+        provider_value = getattr(provider, "value", str(provider))
+        return {
+            "provider": provider_value,
+            "model": getattr(config, "model", "unknown"),
+        }

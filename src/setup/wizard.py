@@ -1,19 +1,17 @@
-"""Interactive setup wizard for Horizon configuration."""
+"""Interactive setup wizard for Horizon Brief configuration."""
 
-import json
 import os
 import sys
-from pathlib import Path
 from typing import Dict, List, Optional
 
 from dotenv import load_dotenv
-from rich.console import Console
 from rich.prompt import Prompt, Confirm
 from rich.table import Table
 from rich.panel import Panel
 
+from ..console import make_console
 from ..models import (
-    AIConfig, AIProvider, Config, FilteringConfig, SourcesConfig,
+    AIConfig, AIProvider, Config, FilteringConfig, SourcesConfig, PersonalBriefingConfig,
     GitHubSourceConfig, HackerNewsConfig, RSSSourceConfig,
     RedditConfig, RedditSubredditConfig, RedditUserConfig,
     TelegramConfig, TelegramChannelConfig,
@@ -22,7 +20,7 @@ from ..storage.manager import StorageManager
 from .presets import load_presets, match_sources
 
 
-console = Console()
+console = make_console()
 
 
 def print_banner():
@@ -91,10 +89,8 @@ def configure_ai() -> Optional[AIConfig]:
     else:
         console.print("[dim]Codex CLI uses your local `codex login` session; no API key is required.[/dim]\n")
 
-    languages = Prompt.ask(
-        "Output languages (comma-separated)",
-        default="zh,en",
-    )
+    default_languages = "ru" if provider == "codex_cli" else "en"
+    languages = Prompt.ask("Output languages (comma-separated)", default=default_languages)
     lang_list = [l.strip() for l in languages.split(",") if l.strip()]
 
     return AIConfig(
@@ -199,6 +195,7 @@ def select_sources(
 def build_config(
     ai_config: AIConfig,
     selected_sources: List[Dict],
+    enable_personal_briefing: bool = False,
 ) -> Config:
     """Step 6: Assemble the final Config object.
 
@@ -259,9 +256,8 @@ def build_config(
         elif src_type == "hackernews":
             hn_enabled = True
 
-    # Always include HackerNews as a universal source
     hn_config = HackerNewsConfig(
-        enabled=True,
+        enabled=hn_enabled,
         fetch_top_stories=30,
         min_score=100,
     )
@@ -291,12 +287,32 @@ def build_config(
         time_window_hours=24,
     )
 
+    personal_language = ai_config.languages[0] if ai_config.languages else "en"
+    if enable_personal_briefing and personal_language != "ru":
+        personal_language = "ru"
+
     return Config(
         version="1.0",
         ai=ai_config,
         sources=sources,
         filtering=filtering,
+        personal_briefing=PersonalBriefingConfig(
+            enabled=enable_personal_briefing,
+            language=personal_language,
+            generate_standard_summaries=False,
+        ),
     )
+
+
+def _source_is_safe_default(src: Dict) -> bool:
+    src_type = src.get("type", "")
+    if src_type in {"hackernews", "reddit_subreddit", "reddit_user", "telegram", "twitter"}:
+        return False
+    if src_type == "rss":
+        url = (src.get("config", {}).get("url", "") or "").lower()
+        if "${" in url or "lwn.net/headlines/full_text" in url:
+            return False
+    return True
 
 
 def merge_configs(new_config: Config, existing_config: Config) -> Config:
@@ -421,12 +437,21 @@ def main():
 
     # Step 5: Interactive source selection
     selected = select_sources(preset_sources, ai_sources)
+    enable_personal_briefing = Confirm.ask("Enable personal evidence-aware briefing mode?", default=True)
+
+    if enable_personal_briefing:
+        before = len(selected)
+        selected = [s for s in selected if _source_is_safe_default(s)]
+        if before != len(selected):
+            console.print(
+                f"[yellow]Filtered out {before - len(selected)} unsafe default sources for personal briefing mode.[/yellow]"
+            )
 
     if not selected:
-        console.print("[yellow]No sources selected. Adding HackerNews as default.[/yellow]")
+        console.print("[yellow]No sources selected. Keeping all optional sources disabled by default.[/yellow]")
 
     # Step 6: Build config
-    config = build_config(ai_config, selected)
+    config = build_config(ai_config, selected, enable_personal_briefing=enable_personal_briefing)
 
     # Merge with existing config if present
     try:

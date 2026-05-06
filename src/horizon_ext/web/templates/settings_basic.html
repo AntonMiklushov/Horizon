@@ -1,0 +1,39 @@
+{% extends "base.html" %}
+{% block title %}Basic Settings{% endblock %}
+{% block content %}
+<h1>Basic Settings</h1>
+{% if saved %}<div class="notice saved">Settings saved.</div>{% endif %}
+{% if error %}<div class="notice error">{{ error }}</div>{% endif %}
+{% if config_error %}<div class="notice error">{{ config_error }}</div>{% endif %}
+
+{% if config %}
+<form method="post" class="panel">
+  <div class="row">
+    <div class="span-3">
+      <label for="web_default_hours">Default Hours</label>
+      <input id="web_default_hours" name="web_default_hours" type="number" min="1" max="720" value="{{ default_hours }}">
+    </div>
+    <div class="span-3">
+      <label for="ai_score_threshold">Score Threshold</label>
+      <input id="ai_score_threshold" name="ai_score_threshold" type="number" min="0" max="10" step="0.1" value="{{ config.filtering.ai_score_threshold }}">
+    </div>
+    <div class="span-3">
+      <label for="max_items_per_source">Max Per Source</label>
+      <input id="max_items_per_source" name="max_items_per_source" type="number" min="1" max="100" value="{{ config.filtering.max_items_per_source }}">
+    </div>
+    <div class="span-3">
+      <label for="languages">Languages</label>
+      <input id="languages" name="languages" type="text" value="{{ config.ai.languages | join(', ') }}">
+    </div>
+  </div>
+  <label>Output Formats</label>
+  <div class="checks">
+    {% for format in ["markdown", "html", "email_html"] %}
+      <label class="checkline"><input type="checkbox" name="output_formats" value="{{ format }}" {% if format in config.rendering.output_formats %}checked{% endif %}> {{ format }}</label>
+    {% endfor %}
+  </div>
+  <label class="checkline"><input type="checkbox" name="publishing_enabled" {% if config.publishing.enabled %}checked{% endif %}> Publishing enabled for CLI runs</label>
+  <button type="submit">Save</button>
+</form>
+{% endif %}
+{% endblock %}

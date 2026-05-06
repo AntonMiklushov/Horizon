@@ -1,0 +1,118 @@
+{% extends "base.html" %}
+{% block title %}Run {{ run_id }}{% endblock %}
+{% block head %}
+{% if run_state and run_state.status in ["queued", "running"] %}
+<script>
+  async function refreshRun() {
+    const response = await fetch("/api/runs/{{ run_id }}");
+    const payload = await response.json();
+    const state = payload.state;
+    if (state) {
+      document.querySelector("[data-run-status]").textContent = state.status;
+      document.querySelector("[data-run-message]").textContent = state.message || "";
+      if (state.status === "completed" || state.status === "failed") {
+        window.location.reload();
+      }
+    }
+  }
+  window.setInterval(refreshRun, 2500);
+</script>
+{% endif %}
+<script>
+  function showRunTab(target) {
+    document.querySelectorAll("[data-tab-panel]").forEach((panel) => {
+      panel.hidden = panel.dataset.tabPanel !== target;
+    });
+    document.querySelectorAll("[data-tab-target]").forEach((button) => {
+      button.classList.toggle("active", button.dataset.tabTarget === target);
+    });
+  }
+</script>
+{% endblock %}
+{% block content %}
+<h1>Run {{ run_id }}</h1>
+
+<section class="panel">
+  <h2>Status</h2>
+  {% if run_state %}
+    <p><span class="pill" data-run-status>{{ run_state.status }}</span> <span data-run-message>{{ run_state.message }}</span></p>
+    {% if run_state.error %}<p class="bad">{{ run_state.error }}</p>{% endif %}
+  {% elif meta %}
+    <p><span class="pill">saved</span></p>
+  {% else %}
+    <p class="bad">Run not found.</p>
+  {% endif %}
+  {% if meta %}
+    <p class="muted">Hours: {{ meta.hours }} | Raw: {{ meta.raw_count or meta.raw_count_before_merge }} | Local only: {{ meta.local_only }}</p>
+    {% if meta.run_instructions %}<p><strong>Instructions:</strong> {{ meta.run_instructions }}</p>{% endif %}
+  {% endif %}
+  <div>
+    {% for stage, ok in stages.items() %}
+      <span class="pill">{{ stage }}: {{ "yes" if ok else "no" }}</span>
+    {% endfor %}
+  </div>
+</section>
+
+<div class="tabbar">
+  <button type="button" class="tab-button active" data-tab-target="report" onclick="showRunTab('report')">Report</button>
+  <button type="button" class="tab-button" data-tab-target="markdown" onclick="showRunTab('markdown')">Markdown</button>
+  <button type="button" class="tab-button" data-tab-target="items" onclick="showRunTab('items')">Items</button>
+  <button type="button" class="tab-button" data-tab-target="raw" onclick="showRunTab('raw')">Raw Data</button>
+</div>
+
+<section data-tab-panel="report">
+  {% if rendered_summary %}
+    <h2>Report</h2>
+    <article class="report">{{ rendered_summary | safe }}</article>
+  {% elif run_state and run_state.status in ["queued", "running"] %}
+    <div class="notice">Report is still running.</div>
+  {% else %}
+    <div class="notice">No rendered report is available yet.</div>
+  {% endif %}
+</section>
+
+<section data-tab-panel="markdown" hidden>
+  {% if summaries %}
+    <h2>Markdown</h2>
+    {% for summary in summaries %}
+      <h3>{{ summary.language }}</h3>
+      <pre>{{ summary.markdown }}</pre>
+    {% endfor %}
+  {% else %}
+    <div class="notice">No Markdown artifact is available yet.</div>
+  {% endif %}
+</section>
+
+<section data-tab-panel="items" hidden>
+  {% if items %}
+    <h2>Items</h2>
+    <table>
+      <thead><tr><th>Title</th><th>Source</th><th>Score</th><th>Published</th></tr></thead>
+      <tbody>
+        {% for item in items %}
+          <tr>
+            <td><a href="{{ item.url }}">{{ item.title }}</a></td>
+            <td>{{ item.source_type }}</td>
+            <td>{{ item.ai_score or "" }}</td>
+            <td>{{ item.published_at or "" }}</td>
+          </tr>
+        {% endfor %}
+      </tbody>
+    </table>
+  {% else %}
+    <div class="notice">No item stage is available yet.</div>
+  {% endif %}
+</section>
+
+<section data-tab-panel="raw" hidden>
+  {% if stage_payloads %}
+    <h2>Raw Data</h2>
+    {% for payload in stage_payloads %}
+      <h3>{{ payload.stage }}</h3>
+      <pre>{{ payload.json }}</pre>
+    {% endfor %}
+  {% else %}
+    <div class="notice">No raw stage data is available yet.</div>
+  {% endif %}
+</section>
+{% endblock %}

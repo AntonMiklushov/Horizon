@@ -1,0 +1,115 @@
+{% extends "base.html" %}
+{% block title %}Horizon Brief Dashboard{% endblock %}
+{% block content %}
+<h1>Dashboard</h1>
+
+{% if config_error %}
+  <div class="notice error">{{ config_error }}</div>
+{% endif %}
+
+{% if validation and validation.missing_env %}
+  <div class="notice error">Missing environment: {{ validation.missing_env | join(", ") }}</div>
+{% elif validation and validation.warnings %}
+  <div class="notice">{{ validation.warnings | join("; ") }}</div>
+{% endif %}
+
+<div class="grid two">
+  <section class="panel">
+    <h2>Run Report</h2>
+    <form method="post" action="/runs">
+      <div class="row">
+        <div class="span-3">
+          <label for="hours">Hours</label>
+          <input id="hours" name="hours" type="number" min="1" max="720" value="{{ default_hours }}">
+        </div>
+        <div class="span-3">
+          <label for="threshold">Threshold</label>
+          <input id="threshold" name="threshold" type="number" min="0" max="10" step="0.1" value="{{ config.filtering.ai_score_threshold if config else '' }}">
+        </div>
+        <div class="span-6">
+          <label for="languages">Languages</label>
+          <input id="languages" name="languages" type="text" value="{{ config.ai.languages | join(', ') if config else 'en' }}">
+        </div>
+      </div>
+      <label>Sources</label>
+      <div class="checks">
+        {% for source in sources %}
+          <label class="checkline"><input type="checkbox" name="sources" value="{{ source }}" checked> {{ source }}</label>
+        {% endfor %}
+      </div>
+      <label for="instructions">Selection Instructions</label>
+      <textarea id="instructions" name="instructions" placeholder="Prioritize central bank policy, ignore sports"></textarea>
+      <div class="checks">
+        <label class="checkline"><input type="checkbox" name="enrich" checked> Enrich</label>
+        <label class="checkline"><input type="checkbox" name="topic_dedup" checked> Topic dedup</label>
+      </div>
+      <button type="submit">Run</button>
+    </form>
+  </section>
+
+  <aside class="panel">
+    <h2>Config</h2>
+    {% if config %}
+      <div class="grid three">
+        {% for name, count in source_counts.items() %}
+          <div>
+            <div class="metric">{{ count }}</div>
+            <div class="muted">{{ name }}</div>
+          </div>
+        {% endfor %}
+      </div>
+      <p class="muted">Provider: {{ config.ai.provider.value }} / {{ config.ai.model }}</p>
+      <p>
+        <a class="button secondary" href="/settings/basic">Edit Settings</a>
+        <a class="button secondary" href="/settings/sources">Edit Sources</a>
+      </p>
+    {% endif %}
+  </aside>
+</div>
+
+<section class="band">
+  <h2>Active Runs</h2>
+  {% if active_runs %}
+    <table>
+      <thead><tr><th>Run</th><th>Status</th><th>Started</th><th></th></tr></thead>
+      <tbody>
+        {% for run in active_runs %}
+          <tr>
+            <td>{{ run.run_id }}</td>
+            <td><span class="pill">{{ run.status }}</span></td>
+            <td>{{ run.started_at }}</td>
+            <td><a href="/runs/{{ run.run_id }}">Open</a></td>
+          </tr>
+        {% endfor %}
+      </tbody>
+    </table>
+  {% else %}
+    <p class="muted">No active runs.</p>
+  {% endif %}
+</section>
+
+<section class="band">
+  <h2>Recent Runs</h2>
+  {% if runs %}
+    <table>
+      <thead><tr><th>Run</th><th>Updated</th><th>Stages</th><th></th></tr></thead>
+      <tbody>
+        {% for run in runs %}
+          <tr>
+            <td>{{ run.run_id }}</td>
+            <td>{{ run.updated_at }}</td>
+            <td>
+              {% for stage, ok in run.stages.items() %}
+                <span class="pill">{{ stage }}: {{ "yes" if ok else "no" }}</span>
+              {% endfor %}
+            </td>
+            <td><a href="/runs/{{ run.run_id }}">Open</a></td>
+          </tr>
+        {% endfor %}
+      </tbody>
+    </table>
+  {% else %}
+    <p class="muted">No saved runs.</p>
+  {% endif %}
+</section>
+{% endblock %}

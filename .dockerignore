@@ -4,6 +4,9 @@ __pycache__/
 *$py.class
 *.so
 .Python
+.pytest-tmp/
+.pytest_cache/
+.pytest-manual-tmp/
 .venv/
 venv/
 ENV/
@@ -28,8 +31,16 @@ docs/
 
 # Data (will be mounted as volume)
 .env
+.env.local
+.env.*.local
+data/config.json
+data/*.bak
+data/mcp-runs/
+data/*secrets*.json
 data/summaries/
 data/subscribers.json
+.cursor/*secrets*.json
+config/*secrets*.json
 
 # Build artifacts
 *.egg-info/
@@ -41,3 +52,4 @@ todo.txt
 *.svg
 *.tsx
 .claude/
+pytest-basetemp*/

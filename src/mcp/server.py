@@ -1,4 +1,4 @@
-"""MCP server entrypoint for Horizon."""
+"""MCP server entrypoint for Horizon Brief."""
 
 from __future__ import annotations
 
@@ -135,7 +135,7 @@ async def hz_validate_config(
     sources: list[str] | None = None,
     check_env: bool = True,
 ) -> dict[str, Any]:
-    """Validate Horizon config and required environment variables."""
+    """Validate Horizon Brief config and required environment variables."""
 
     return await _run_tool(
         "hz_validate_config",
@@ -155,6 +155,8 @@ async def hz_fetch_items(
     horizon_path: str | None = None,
     config_path: str | None = None,
     sources: list[str] | None = None,
+    run_instructions: str | None = None,
+    local_only: bool = False,
 ) -> dict[str, Any]:
     """Fetch and deduplicate content into the raw stage."""
 
@@ -166,6 +168,8 @@ async def hz_fetch_items(
             horizon_path=horizon_path,
             config_path=config_path,
             sources=sources,
+            run_instructions=run_instructions,
+            local_only=local_only,
         ),
     )
 
@@ -177,6 +181,8 @@ async def hz_score_items(
     horizon_path: str | None = None,
     config_path: str | None = None,
     max_items: int | None = None,
+    run_instructions: str | None = None,
+    local_only: bool = False,
 ) -> dict[str, Any]:
     """Score a stage into the scored stage."""
 
@@ -188,6 +194,8 @@ async def hz_score_items(
             horizon_path=horizon_path,
             config_path=config_path,
             max_items=max_items,
+            run_instructions=run_instructions,
+            local_only=local_only,
         ),
     )
 
@@ -200,6 +208,8 @@ async def hz_filter_items(
     topic_dedup: bool = True,
     horizon_path: str | None = None,
     config_path: str | None = None,
+    run_instructions: str | None = None,
+    local_only: bool = False,
 ) -> dict[str, Any]:
     """Filter scored items into the filtered stage."""
 
@@ -212,6 +222,8 @@ async def hz_filter_items(
             topic_dedup=topic_dedup,
             horizon_path=horizon_path,
             config_path=config_path,
+            run_instructions=run_instructions,
+            local_only=local_only,
         ),
     )
 
@@ -223,6 +235,7 @@ async def hz_enrich_items(
     horizon_path: str | None = None,
     config_path: str | None = None,
     max_items: int | None = None,
+    local_only: bool = False,
 ) -> dict[str, Any]:
     """Enrich filtered items into the enriched stage."""
 
@@ -234,6 +247,7 @@ async def hz_enrich_items(
             horizon_path=horizon_path,
             config_path=config_path,
             max_items=max_items,
+            local_only=local_only,
         ),
     )
 
@@ -247,6 +261,7 @@ async def hz_generate_summary(
     config_path: str | None = None,
     save_to_horizon_data: bool = False,
     max_items: int | None = None,
+    local_only: bool = False,
 ) -> dict[str, Any]:
     """Generate a markdown summary from a stage."""
 
@@ -260,6 +275,7 @@ async def hz_generate_summary(
             config_path=config_path,
             save_to_horizon_data=save_to_horizon_data,
             max_items=max_items,
+            local_only=local_only,
         ),
     )
 
@@ -267,6 +283,7 @@ async def hz_generate_summary(
 @mcp.tool()
 async def hz_run_pipeline(
     hours: int = 24,
+    run_id: str | None = None,
     languages: list[str] | None = None,
     threshold: float | None = None,
     horizon_path: str | None = None,
@@ -277,6 +294,8 @@ async def hz_run_pipeline(
     save_to_horizon_data: bool = False,
     max_raw_items: int | None = None,
     max_filtered_items: int | None = None,
+    run_instructions: str | None = None,
+    local_only: bool = False,
 ) -> dict[str, Any]:
     """Run fetch -> score -> filter -> enrich -> summarize in one call."""
 
@@ -284,6 +303,7 @@ async def hz_run_pipeline(
         "hz_run_pipeline",
         lambda: service.run_pipeline(
             hours=hours,
+            run_id=run_id,
             languages=languages,
             threshold=threshold,
             horizon_path=horizon_path,
@@ -294,6 +314,8 @@ async def hz_run_pipeline(
             save_to_horizon_data=save_to_horizon_data,
             max_raw_items=max_raw_items,
             max_filtered_items=max_filtered_items,
+            run_instructions=run_instructions,
+            local_only=local_only,
         ),
     )
 
@@ -422,7 +444,7 @@ async def hz_send_webhook(
     """Send a webhook notification with the given variables.
 
     Uses the webhook URL (from environment variable), request_body template,
-    and headers from the Horizon config. Template variables #{date}, #{language},
+    and headers from the Horizon Brief config. Template variables #{date}, #{language},
     #{important_items}, #{all_items}, #{result}, #{timestamp},
     #{summary} are replaced in the URL and request_body before sending.
     """
@@ -499,7 +521,7 @@ def r_run_summary(run_id: str, language: str) -> dict[str, Any]:
 
 @mcp.resource("horizon://config/effective")
 def r_effective_config() -> dict[str, Any]:
-    """Effective default config resolved from local Horizon path."""
+    """Effective default config resolved from local Horizon Brief path."""
 
     return _resource_result("horizon://config/effective", service.get_effective_config)
 

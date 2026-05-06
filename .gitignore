@@ -3,6 +3,8 @@ __pycache__/
 *.py[cod]
 *$py.class
 .pytest_cache/
+.pytest-tmp/
+.pytest-manual-tmp/
 *.so
 .Python
 build/
@@ -36,11 +38,19 @@ ENV/
 
 # Environment variables
 .env
+.env.local
+.env.*.local
 
 # Data files (keep structure, ignore content)
+data/config.json
+data/*.bak
+data/mcp-runs/
+data/*secrets*.json
 data/seen.json
 data/summaries/*.md
 data/subscribers.json
+.cursor/*secrets*.json
+config/*secrets*.json
 
 docs/_posts/*.md
 
@@ -59,6 +69,7 @@ horizon-qa/
 .horizon-qa/
 .horizon-codex-*/
 .codex-tmp*/
+pytest-basetemp*/
 
 # todo
 todo.txt

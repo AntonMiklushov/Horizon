@@ -3,11 +3,12 @@
 from __future__ import annotations
 
 import subprocess
+from pathlib import Path
 from types import SimpleNamespace
 
 import pytest
 
-from src.ai.client import CodexCliClient, OpenAIClient, create_ai_client
+from src.ai.client import CodexCliClient, OpenAIClient, _LocalTempDir, create_ai_client
 from src.models import AIConfig, AIProvider
 
 
@@ -26,7 +27,7 @@ def _make_config(**overrides) -> AIConfig:
     return AIConfig(**defaults)
 
 
-class FakeWorkspaceTempDir:
+class FakeLocalTempDir:
     def __init__(self, *args, **kwargs):
         self.name = "fake-temp-dir"
 
@@ -50,7 +51,7 @@ def test_command_uses_codex_exec_and_passes_prompt(monkeypatch):
         return SimpleNamespace(returncode=0, stdout="completion\n", stderr="")
 
     monkeypatch.setattr("src.ai.client.subprocess.run", fake_run)
-    monkeypatch.setattr("src.ai.client._WorkspaceTempDir", FakeWorkspaceTempDir)
+    monkeypatch.setattr("src.ai.client._LocalTempDir", FakeLocalTempDir)
     client = CodexCliClient(_make_config(codex_use_output_last_message=False))
     client._supported_flags = {"--color", "--sandbox", "--skip-git-repo-check", "-c"}
 
@@ -60,7 +61,9 @@ def test_command_uses_codex_exec_and_passes_prompt(monkeypatch):
 
     assert result == "completion"
     args, kwargs = calls[0]
-    assert args[:2] == ["codex", "exec"]
+    assert args[1] == "exec"
+    command_name = args[0].lower()
+    assert command_name.endswith("codex") or command_name.endswith("codex.exe")
     assert args.count("--skip-git-repo-check") == 1
     assert args[args.index("-c") + 1] == 'model_reasoning_effort="medium"'
     assert args[-1] == "-"
@@ -120,7 +123,7 @@ def test_output_last_message_artifact_wins_over_stdout(monkeypatch):
         return SimpleNamespace(returncode=0, stdout="stdout answer\n", stderr="")
 
     monkeypatch.setattr("src.ai.client.subprocess.run", fake_run)
-    monkeypatch.setattr("src.ai.client._WorkspaceTempDir", FakeWorkspaceTempDir)
+    monkeypatch.setattr("src.ai.client._LocalTempDir", FakeLocalTempDir)
     monkeypatch.setattr(
         CodexCliClient,
         "_read_artifact",
@@ -132,6 +135,33 @@ def test_output_last_message_artifact_wins_over_stdout(monkeypatch):
     result = client._run_codex_exec(client._build_prompt(system="s", user="u"))
 
     assert result == "artifact answer"
+
+
+def test_codex_temp_dir_is_not_created_in_workspace(monkeypatch, tmp_path):
+    monkeypatch.chdir(tmp_path)
+
+    temp_dir = _LocalTempDir(prefix="horizon-test-")
+
+    try:
+        assert Path(temp_dir.name).name.startswith("horizon-test-")
+        assert not Path(temp_dir.name).resolve().is_relative_to(tmp_path.resolve())
+    finally:
+        temp_dir.cleanup()
+
+
+def test_codex_temp_dir_cleanup_ignores_os_errors(monkeypatch):
+    class RaisingTempDir:
+        name = "fake-temp-dir"
+
+        def cleanup(self):
+            raise PermissionError("cleanup denied")
+
+    monkeypatch.setattr(
+        "src.ai.client.tempfile.TemporaryDirectory",
+        lambda **kwargs: RaisingTempDir(),
+    )
+
+    _LocalTempDir(prefix="horizon-test-").cleanup()
 
 
 def test_non_zero_exit_raises_clear_error(monkeypatch):
@@ -152,11 +182,11 @@ def test_timeout_raises_clear_error(monkeypatch):
 
     monkeypatch.setattr("src.ai.client.subprocess.run", fake_run)
     client = CodexCliClient(
-        _make_config(codex_timeout_sec=1, codex_use_output_last_message=False)
+        _make_config(codex_timeout_sec=30, codex_use_output_last_message=False)
     )
     client._supported_flags = set()
 
-    with pytest.raises(TimeoutError, match="Codex CLI timed out after 1 seconds"):
+    with pytest.raises(TimeoutError, match="Codex CLI timed out after 30 seconds"):
         client._run_codex_exec(client._build_prompt(system="s", user="u"))
 
 

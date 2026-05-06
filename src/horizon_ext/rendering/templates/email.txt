@@ -1,0 +1,14 @@
+{{ digest.title }}
+{{ digest.date }} · {{ digest.items|length }} selected from {{ digest.total_fetched }}
+
+{% for item in digest.items -%}
+{{ item.index }}. {{ item.title }}
+{{ item.url }}
+{% if item.score is not none %}Score: {{ "%.1f"|format(item.score) }}/10{% endif %}
+{% if item.summary %}{{ item.summary }}{% endif %}
+{% if item.evidence.why_it_matters %}Why it matters: {{ item.evidence.why_it_matters }}{% endif %}
+Source: {{ item.source.name }} · {{ item.source.role }} · {{ item.source.tier }}
+
+{% else -%}
+No selected items.
+{% endfor %}

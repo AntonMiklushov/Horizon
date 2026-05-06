@@ -1,4 +1,4 @@
-"""Webhook notification service for Horizon."""
+"""Webhook notification service for Horizon Brief."""
 
 import html
 import json
@@ -7,6 +7,7 @@ import os
 import re
 from datetime import datetime, timezone
 from typing import Any, List, Optional, Union
+from urllib.parse import urlsplit
 import httpx
 
 from ..models import ContentItem, WebhookConfig
@@ -28,6 +29,9 @@ _LI_LINK_RE = re.compile(
 _LI_RE = re.compile(r"<li>\s*(.*?)\s*</li>", re.IGNORECASE | re.DOTALL)
 _ANCHOR_ID_RE = re.compile(r"<a\s+[^>]*id=[\"'][^\"']+[\"'][^>]*>\s*</a>", re.IGNORECASE)
 _HTML_TAG_RE = re.compile(r"<[^>]+>")
+_SECRET_TEXT_RE = re.compile(
+    r"(?i)(token|secret|password|key|authorization)([\"'\s:=]+)([^\"'\s,}]+)"
+)
 
 
 def _truncate(value: str, limit: int, split: str) -> str:
@@ -57,6 +61,32 @@ def _truncate(value: str, limit: int, split: str) -> str:
         current_chars += seg_chars
 
     return split.join(kept)
+
+
+def _redact_text(value: str) -> str:
+    value = re.sub(r"([?&](?:token|key|secret|password)=)[^&#\s]+", r"\1<redacted>", value, flags=re.IGNORECASE)
+    return _SECRET_TEXT_RE.sub(r"\1\2<redacted>", value)
+
+
+def _redact_headers(headers: dict[str, str]) -> dict[str, str]:
+    redacted = {}
+    for key, value in headers.items():
+        key_l = key.lower()
+        if any(token in key_l for token in ("authorization", "token", "secret", "password", "api-key", "api_key")):
+            redacted[key] = "<redacted>"
+        else:
+            redacted[key] = _redact_text(str(value))
+    return redacted
+
+
+def _redact_url(value: str) -> str:
+    try:
+        parts = urlsplit(value)
+    except ValueError:
+        return "<redacted-url>"
+    if not parts.scheme or not parts.netloc:
+        return "<redacted-url>"
+    return f"{parts.scheme}://{parts.netloc}/<redacted>"
 
 
 def _render(template: Union[str, dict, list], variables: dict) -> Union[str, dict, list]:
@@ -243,8 +273,8 @@ class WebhookNotifier:
         self.url = os.getenv(config.url_env or "") if config.url_env else None
         if console is None:
             try:
-                from rich.console import Console
-                self.console = Console()
+                from ..console import make_console
+                self.console = make_console()
             except ImportError:
                 class DummyConsole:
                     def print(self, *args, **kwargs):
@@ -268,14 +298,19 @@ class WebhookNotifier:
                 body_content = json.dumps(rendered_obj, ensure_ascii=False)
                 content_type = "application/json"
             elif isinstance(raw_body, str) and raw_body.strip():
-                rendered = _render(raw_body, body_variables)
-                body_content = rendered
-                if _isjson(rendered):
+                if _isjson(raw_body):
                     try:
-                        json.loads(rendered)
-                        content_type = "application/json"
-                    except json.JSONDecodeError:
-                        pass
+                        template_obj = json.loads(raw_body)
+                    except json.JSONDecodeError as exc:
+                        raise ValueError(
+                            "Webhook JSON request_body strings must be valid JSON before "
+                            "placeholder rendering; use a dict/list request_body for structured payloads."
+                        ) from exc
+                    rendered_obj = _render(template_obj, body_variables)
+                    body_content = json.dumps(rendered_obj, ensure_ascii=False)
+                    content_type = "application/json"
+                else:
+                    body_content = _render(raw_body, body_variables)
 
         headers = _extract_headers(self.config.headers)
         headers["Content-Type"] = content_type
@@ -298,23 +333,23 @@ class WebhookNotifier:
         if lang == "zh":
             if item_count == 0:
                 return (
-                    f"# Horizon 每日速递 - {date}\n\n"
+                    f"# Horizon Brief 每日速递 - {date}\n\n"
                     f"> 已分析 {all_items_count} 条内容，暂无达到重要性阈值的资讯。"
                 )
             return (
-                f"# Horizon 每日速递 - {date}\n\n"
+                f"# Horizon Brief 每日速递 - {date}\n\n"
                 f"> 从 {all_items_count} 条内容中筛选出 {item_count} 条重要资讯。\n\n"
                 "点击下方新闻面板即可在飞书内展开阅读全文。"
             )
 
         if item_count == 0:
             return (
-                f"# Horizon Daily - {date}\n\n"
+                f"# Horizon Brief Daily - {date}\n\n"
                 f"> Analyzed {all_items_count} items, but none met the importance threshold."
             )
 
         return (
-            f"# Horizon Daily - {date}\n\n"
+            f"# Horizon Brief Daily - {date}\n\n"
             f"> Selected {item_count} important items from {all_items_count} fetched items.\n\n"
             "Expand the panels below to read the full briefing inside Feishu/Lark."
         )
@@ -363,8 +398,8 @@ class WebhookNotifier:
                     "title": {
                         "tag": "plain_text",
                         "content": (
-                            f"Horizon {date} 折叠日报" if lang == "zh"
-                            else f"Horizon {date} Collapsible Daily"
+                            f"Horizon Brief {date} 折叠日报" if lang == "zh"
+                            else f"Horizon Brief {date} Collapsible Daily"
                         ),
                     },
                     "template": "blue",
@@ -382,6 +417,16 @@ class WebhookNotifier:
             "url": request_url,
             "body": body_content,
             "headers": headers,
+        }
+
+    def build_safe_preview(self, variables: dict) -> dict[str, Any]:
+        """Build a dry-run preview with URL, body, and headers redacted."""
+        preview = self.build_preview(variables)
+        body = preview["body"]
+        return {
+            "url": _redact_url(preview["url"]),
+            "body": _redact_text(body) if body is not None else None,
+            "headers": _redact_headers(preview["headers"]),
         }
 
     def build_daily_summary_messages(
@@ -411,8 +456,8 @@ class WebhookNotifier:
             return [{
                 **base_vars,
                 "message_title": (
-                    f"Horizon {date} 折叠日报" if lang == "zh"
-                    else f"Horizon {date} Collapsible Daily"
+                    f"Horizon Brief {date} 折叠日报" if lang == "zh"
+                    else f"Horizon Brief {date} Collapsible Daily"
                 ),
                 "message_kind": "collapsible",
                 "summary": self._build_feishu_collapsible_overview(
@@ -439,8 +484,8 @@ class WebhookNotifier:
             overview_message = {
                 **base_vars,
                 "message_title": (
-                    f"Horizon {date} 总览" if lang == "zh"
-                    else f"Horizon {date} Overview"
+                    f"Horizon Brief {date} 总览" if lang == "zh"
+                    else f"Horizon Brief {date} Overview"
                 ),
                 "message_kind": "overview",
                 "summary": overview,
@@ -471,8 +516,8 @@ class WebhookNotifier:
         return [{
             **base_vars,
             "message_title": (
-                f"Horizon {date} 日报" if lang == "zh"
-                else f"Horizon {date} Daily"
+                f"Horizon Brief {date} 日报" if lang == "zh"
+                else f"Horizon Brief {date} Daily"
             ),
             "message_kind": "summary",
             "summary": summary,
@@ -499,9 +544,14 @@ class WebhookNotifier:
         method = "GET"
         raw_body = self.config.request_body
         request_url, body_content, headers = self._render_request_components(variables)
+        safe_request_url = _redact_url(request_url)
         if raw_body:
             method = "POST"
-            logger.debug("Webhook POST body (%d chars): %s", len(body_content or ""), (body_content or "")[:2000])
+            logger.debug(
+                "Webhook POST body (%d chars): %s",
+                len(body_content or ""),
+                _redact_text(body_content or "")[:2000],
+            )
 
         try:
             async with httpx.AsyncClient(timeout=30.0) as client:
@@ -517,7 +567,7 @@ class WebhookNotifier:
             if response.status_code == 200:
                 logger.info(
                     "Webhook sent OK. URL: %s, body: %s",
-                    request_url,
+                    safe_request_url,
                     response.text[:500],
                 )
             else:
@@ -527,14 +577,14 @@ class WebhookNotifier:
                 )
                 logger.error(
                     "Webhook failed! URL: %s, status: %d, body: %s",
-                    request_url,
+                    safe_request_url,
                     response.status_code,
                     response.text[:500],
                 )
 
         except Exception as e:
             self.console.print(f"[red]Webhook call failed! Exception: {e}[/red]")
-            logger.error("Webhook call failed! URL: %s, exception: %s", request_url, e)
+            logger.error("Webhook call failed! URL: %s, exception: %s", safe_request_url, e)
 
     async def send_daily_summary(
         self,
@@ -596,7 +646,7 @@ class WebhookNotifier:
             "all_items": 0,
             "result": "failed",
             "timestamp": str(int(datetime.now(timezone.utc).timestamp())),
-            "message_title": "Horizon generation failed",
+            "message_title": "Horizon Brief generation failed",
             "message_kind": "failure",
             "summary": f"generation failed: {error_message}",
         })

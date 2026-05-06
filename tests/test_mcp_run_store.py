@@ -41,6 +41,21 @@ def test_update_meta_sets_updated_at(tmp_path: Path) -> None:
     assert "updated_at" in meta
 
 
+def test_write_json_falls_back_when_atomic_replace_is_denied(
+    tmp_path: Path, monkeypatch
+) -> None:
+    def deny_replace(src, dst):
+        raise PermissionError("replace denied")
+
+    monkeypatch.setattr("src.mcp.run_store.os.replace", deny_replace)
+    store = RunStore(tmp_path)
+
+    run_id = store.create_run("run-fallback")
+    store.update_meta(run_id, {"status": "done"})
+
+    assert store.load_meta(run_id)["status"] == "done"
+
+
 def test_save_and_load_summary(tmp_path: Path) -> None:
     store = RunStore(tmp_path)
     run_id = store.create_run("run-summary")
@@ -65,6 +80,23 @@ def test_missing_run_raises(tmp_path: Path) -> None:
 
     with pytest.raises(FileNotFoundError, match="Run not found"):
         store.run_dir("missing-run")
+
+
+@pytest.mark.parametrize("bad_run_id", ["../outside", "..\\outside", "/abs", "run/child", ""])
+def test_run_id_must_be_slug(tmp_path: Path, bad_run_id: str) -> None:
+    store = RunStore(tmp_path)
+
+    with pytest.raises(ValueError, match="Invalid run_id"):
+        store.create_run(bad_run_id)
+
+
+@pytest.mark.parametrize("bad_language", ["../ru", "ru/../../x", ""])
+def test_summary_language_must_be_slug(tmp_path: Path, bad_language: str) -> None:
+    store = RunStore(tmp_path)
+    run_id = store.create_run("run-summary")
+
+    with pytest.raises(ValueError, match="Invalid language"):
+        store.save_summary(run_id, bad_language, "# summary")
 
 
 def test_missing_artifact_raises(tmp_path: Path) -> None:

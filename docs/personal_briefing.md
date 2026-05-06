@@ -38,3 +38,40 @@ Keep local secrets and source choices in `data/config.json`. Do not commit that 
 
 - `uv run horizon`
 - `uv run horizon --hours 24`
+
+### Windows PowerShell
+
+When the checkout is inside a synced folder, keep uv's environment and cache outside
+the repository:
+
+```powershell
+$horizonState = Join-Path $env:LOCALAPPDATA "Horizon"
+$env:UV_PROJECT_ENVIRONMENT = Join-Path $horizonState "uv-env"
+$env:UV_CACHE_DIR = Join-Path $horizonState "uv-cache"
+New-Item -ItemType Directory -Force $horizonState | Out-Null
+uv sync
+```
+
+- `& "$env:UV_PROJECT_ENVIRONMENT\Scripts\horizon.exe"`
+- `& "$env:UV_PROJECT_ENVIRONMENT\Scripts\horizon.exe" --hours 24`
+
+If your terminal is not UTF-8, set it before running Russian output:
+
+```powershell
+$env:PYTHONIOENCODING = "utf-8"
+chcp 65001
+```
+
+For low-churn local QA on locked-down Windows machines:
+
+```powershell
+$horizonState = Join-Path $env:LOCALAPPDATA "Horizon"
+$horizonTemp = Join-Path $horizonState "tmp"
+$env:UV_PROJECT_ENVIRONMENT = Join-Path $horizonState "uv-env"
+$env:UV_CACHE_DIR = Join-Path $horizonState "uv-cache"
+$env:TMP = $horizonTemp
+$env:TEMP = $horizonTemp
+$env:PYTHONDONTWRITEBYTECODE = "1"
+New-Item -ItemType Directory -Force $horizonTemp | Out-Null
+& "$env:UV_PROJECT_ENVIRONMENT\Scripts\pytest.exe" -q -p no:cacheprovider
+```

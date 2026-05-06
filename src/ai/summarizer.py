@@ -19,7 +19,7 @@ def _pangu(text: str) -> str:
 
 LABELS = {
     "en": {
-        "header": "Horizon Daily",
+        "header": "Horizon Brief Daily",
         "source": "Source",
         "background": "Background",
         "discussion": "Discussion",
@@ -37,7 +37,7 @@ LABELS = {
         ),
     },
     "zh": {
-        "header": "Horizon 每日速递",
+        "header": "Horizon Brief 每日速递",
         "source": "来源",
         "background": "背景",
         "discussion": "社区讨论",
@@ -52,6 +52,24 @@ LABELS = {
             "1. 在 config.json 中降低 `ai_score_threshold`\n"
             "2. 添加更多多样化的信息源\n"
             "3. 检查 AI 模型是否正常工作\n"
+        ),
+    },
+    "ru": {
+        "header": "Ежедневная сводка Horizon Brief",
+        "source": "Источник",
+        "background": "Контекст",
+        "discussion": "Обсуждение",
+        "references": "Ссылки",
+        "tags": "Теги",
+        "empty_body": (
+            "Сегодня нет значимых событий. Возможные причины:\n"
+            "- В отслеживаемых источниках был спокойный день\n"
+            "- Порог `ai_score_threshold` слишком высокий\n"
+            "- Набор источников стоит расширить\n\n"
+            "Что проверить:\n"
+            "1. Снизить `ai_score_threshold` в config.json\n"
+            "2. Добавить более разнообразные источники\n"
+            "3. Убедиться, что AI-модель работает корректно\n"
         ),
     },
 }
@@ -88,11 +106,11 @@ class DailySummarizer:
         if not items:
             return self._generate_empty_summary(date, total_fetched, labels)
 
-        header = (
-            f"# {labels['header']} - {date}\n\n"
-            f"> From {total_fetched} items, {len(items)} important content pieces were selected\n\n"
-            "---\n\n"
-        )
+        if language == "ru":
+            selected_line = f"> Из {total_fetched} материалов выбрано важных: {len(items)}"
+        else:
+            selected_line = f"> From {total_fetched} items, {len(items)} important content pieces were selected"
+        header = f"# {labels['header']} - {date}\n\n{selected_line}\n\n---\n\n"
 
         # TOC
         toc_entries = []
@@ -127,6 +145,12 @@ class DailySummarizer:
                 f"> 从 {total_fetched} 条内容中筛选出 {len(items)} 条重要资讯。\n\n"
                 "下面会按新闻逐条发送详情，你可以只看感兴趣的标题。\n\n"
             )
+        elif language == "ru":
+            header = (
+                f"# {labels['header']} - {date}\n\n"
+                f"> Из {total_fetched} материалов выбрано важных: {len(items)}.\n\n"
+                "Детали будут отправлены по одному материалу, чтобы можно было читать только нужные темы.\n\n"
+            )
         else:
             header = (
                 f"# {labels['header']} - {date}\n\n"
@@ -153,7 +177,12 @@ class DailySummarizer:
     ) -> str:
         """Generate one item message for multi-message webhook delivery."""
         labels = LABELS.get(language, LABELS["en"])
-        prefix = f"第 {index}/{total} 条\n\n" if language == "zh" else f"Item {index}/{total}\n\n"
+        if language == "zh":
+            prefix = f"第 {index}/{total} 条\n\n"
+        elif language == "ru":
+            prefix = f"Материал {index}/{total}\n\n"
+        else:
+            prefix = f"Item {index}/{total}\n\n"
         return prefix + self._format_item(item, labels, language, index).rstrip("-\n ")
 
     def _format_item(self, item: ContentItem, labels: dict, language: str, index: int) -> str:
@@ -240,6 +269,12 @@ class DailySummarizer:
 
     def _generate_empty_summary(self, date: str, total_fetched: int, labels: dict) -> str:
         """Generate summary when no high-scoring items were found."""
+        if labels is LABELS["ru"]:
+            return (
+                f"# {labels['header']} - {date}\n\n"
+                f"> Проанализировано материалов: {total_fetched}; ни один не прошел порог значимости.\n\n"
+                + labels["empty_body"]
+            )
         return (
             f"# {labels['header']} - {date}\n\n"
             f"> Analyzed {total_fetched} items, but none met the importance threshold.\n\n"

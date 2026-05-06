@@ -1,0 +1,95 @@
+name: CI
+
+on:
+  push:
+    branches: [main]
+  pull_request:
+
+permissions:
+  contents: read
+
+jobs:
+  test:
+    name: Python ${{ matrix.python-version }}
+    runs-on: ubuntu-latest
+    strategy:
+      fail-fast: false
+      matrix:
+        python-version: ["3.11", "3.12", "3.13", "3.14"]
+
+    steps:
+      - name: Checkout code
+        uses: actions/checkout@v6
+
+      - name: Set up Python
+        uses: actions/setup-python@v6
+        with:
+          python-version: ${{ matrix.python-version }}
+
+      - name: Install uv
+        uses: astral-sh/setup-uv@v8.1.0
+
+      - name: Install dependencies
+        run: uv sync --frozen --extra dev
+
+      - name: Run tests
+        run: uv run pytest -q
+
+      - name: Check installed packages
+        run: uv pip check
+
+      - name: Build package
+        run: uv build
+
+      - name: Inspect package artifacts
+        run: |
+          uv run python - <<'PY'
+          import tarfile
+          import zipfile
+          from pathlib import Path
+
+          forbidden_exact = (
+              ".env",
+              ".env.local",
+              "data/config.json",
+              "data/config.json.bak",
+              "mcp.secrets",
+              "secrets.json",
+          )
+          forbidden_prefixes = (
+              "data/mcp-runs/",
+              "data/summaries/",
+          )
+          forbidden_contains = (
+              "secrets",
+          )
+
+          bad = []
+          for artifact in Path("dist").iterdir():
+              if artifact.suffix == ".whl":
+                  with zipfile.ZipFile(artifact) as zf:
+                      names = zf.namelist()
+              elif artifact.suffixes[-2:] == [".tar", ".gz"]:
+                  with tarfile.open(artifact) as tf:
+                      names = [member.name for member in tf.getmembers()]
+              else:
+                  continue
+
+              for name in names:
+                  normalized = name.split("/", 1)[-1]
+                  if (
+                      normalized in forbidden_exact
+                      or any(normalized.startswith(prefix) for prefix in forbidden_prefixes)
+                      or any(token in normalized for token in forbidden_contains)
+                  ):
+                      bad.append(f"{artifact.name}: {name}")
+
+          if bad:
+              raise SystemExit("Forbidden runtime files in artifacts:\n" + "\n".join(bad))
+          PY
+
+      - name: Build Docker image
+        run: docker build --pull -t horizon:ci .
+
+      - name: Smoke Docker CLI
+        run: docker run --rm horizon:ci --help

@@ -15,7 +15,7 @@ from ..models import ContentItem, TelegramConfig, TelegramChannelConfig, SourceT
 logger = logging.getLogger(__name__)
 
 TELEGRAM_WEB_BASE = "https://t.me/s"
-USER_AGENT = "Mozilla/5.0 (compatible; Horizon/1.0; +https://github.com/thysrael/horizon)"
+USER_AGENT = "Mozilla/5.0 (compatible; HorizonBrief/1.0; +https://github.com/AntonMiklushov/Horizon)"
 
 
 class TelegramScraper(BaseScraper):

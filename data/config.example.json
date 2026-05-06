@@ -11,7 +11,9 @@
   "codex_cli_provider_example": {
     "provider": "codex_cli",
     "model": "codex-cli",
-    "languages": ["ru"],
+    "languages": [
+      "ru"
+    ],
     "codex_command": "codex",
     "codex_timeout_sec": 180,
     "codex_extra_args": [
@@ -29,7 +31,7 @@
     "imap_server": "imap.qq.com",
     "imap_port": 993,
     "email_address": "xxx@qq.com",
-    "sender_name": "Horizon Daily",
+    "sender_name": "Horizon Brief Daily",
     "subscribe_keyword": "SUBSCRIBE",
     "unsubscribe_keyword": "UNSUBSCRIBE"
   },
@@ -50,7 +52,9 @@
     "hackernews": {
       "enabled": true,
       "fetch_top_stories": 20,
-      "min_score": 100
+      "min_score": 100,
+      "story_lists": ["top", "best"],
+      "include_jobs": false
     },
     "rss": [
       {
@@ -63,7 +67,7 @@
         "name": "LWN.net (subscriber full-text)",
         "url": "https://lwn.net/headlines/full_text?key=${LWN_KEY}",
         "enabled": false,
-        "category": "linux"
+        "category": "linux (requires LWN_KEY env var)"
       }
     ],
     "reddit": {
@@ -132,7 +136,7 @@
           "elements": [
             {
               "tag": "markdown",
-              "content": "Horizon生成结果: #{result}\nHorizon日报重要资讯数量: #{important_items}/#{all_items}"
+              "content": "Horizon Brief generation result: #{result}\nImportant items: #{important_items}/#{all_items}"
             },
             {
               "tag": "hr"
@@ -156,10 +160,33 @@
     "min_importance_priority_topics": 6.5,
     "require_dates": true,
     "source_policy_file": "data/config.personal-news.example.json",
+    "priority_topics": [
+      "russia",
+      "moscow",
+      "world_economy",
+      "tech_ai",
+      "open_source",
+      "big_tech",
+      "science"
+    ],
     "critic_pass": {
       "enabled": true,
       "auto_revise_once": true
     },
     "generate_standard_summaries": false
+  },
+  "rendering": {
+    "template_dir": null,
+    "output_formats": ["markdown", "html"],
+    "inline_email_css": true
+  },
+  "publishing": {
+    "enabled": true,
+    "docs_dir": "docs",
+    "site_base_url": null
+  },
+  "notes": {
+    "runtime_config": "data/config.json is local runtime state; do not commit it.",
+    "personal_mode": "For evidence-aware personal briefing, disable social/community defaults unless explicitly needed and keep generate_standard_summaries=false."
   }
 }

@@ -1,9 +1,10 @@
-"""Run artifact persistence for Horizon MCP."""
+"""Run artifact persistence for Horizon Brief MCP."""
 
 from __future__ import annotations
 
 import json
 import os
+import re
 import time
 from dataclasses import dataclass
 from datetime import datetime, timezone
@@ -18,6 +19,7 @@ STAGES = {
     "filtered": "filtered_items.json",
     "enriched": "enriched_items.json",
 }
+SLUG_RE = re.compile(r"^[A-Za-z0-9][A-Za-z0-9_.-]{0,127}$")
 
 
 @dataclass
@@ -27,11 +29,15 @@ class RunStore:
     root: Path
 
     def __post_init__(self) -> None:
+        self.root = self.root.resolve()
         self.root.mkdir(parents=True, exist_ok=True)
 
     def create_run(self, run_id: str | None = None) -> str:
-        run_id = run_id or self._make_run_id()
+        if run_id is None:
+            run_id = self._make_run_id()
+        self._validate_slug(run_id, "run_id")
         run_dir = self.root / run_id
+        self._assert_under_root(run_dir)
         run_dir.mkdir(parents=True, exist_ok=True)
         meta_path = run_dir / "meta.json"
         if not meta_path.exists():
@@ -39,7 +45,9 @@ class RunStore:
         return run_id
 
     def run_dir(self, run_id: str) -> Path:
+        self._validate_slug(run_id, "run_id")
         path = self.root / run_id
+        self._assert_under_root(path)
         if not path.exists():
             raise FileNotFoundError(f"Run not found: {run_id}")
         return path
@@ -54,13 +62,16 @@ class RunStore:
         return self.read_json(run_id, self._stage_file(stage))
 
     def save_summary(self, run_id: str, language: str, markdown: str) -> Path:
+        self._validate_slug(language, "language")
         filename = f"summary-{language}.md"
         path = self.run_dir(run_id) / filename
         self._write_text(path, markdown)
         return path
 
     def load_summary(self, run_id: str, language: str) -> str:
+        self._validate_slug(language, "language")
         path = self.run_dir(run_id) / f"summary-{language}.md"
+        self._assert_under_root(path)
         if not path.exists():
             raise FileNotFoundError(f"Summary not found: run={run_id} lang={language}")
         return path.read_text(encoding="utf-8")
@@ -106,11 +117,13 @@ class RunStore:
 
     def write_json(self, run_id: str, filename: str, payload: Any) -> Path:
         path = self.run_dir(run_id) / filename
+        self._assert_under_root(path)
         self._write_text(path, json.dumps(payload, ensure_ascii=False, indent=2))
         return path
 
     def read_json(self, run_id: str, filename: str) -> Any:
         path = self.run_dir(run_id) / filename
+        self._assert_under_root(path)
         if not path.exists():
             raise FileNotFoundError(f"Artifact not found: run={run_id} file={filename}")
         return json.loads(path.read_text(encoding="utf-8"))
@@ -132,6 +145,16 @@ class RunStore:
         return datetime.now(timezone.utc).isoformat()
 
     @staticmethod
+    def _validate_slug(value: str, field: str) -> None:
+        if not SLUG_RE.fullmatch(value):
+            raise ValueError(f"Invalid {field}: {value!r}")
+
+    def _assert_under_root(self, path: Path) -> None:
+        resolved = path.resolve()
+        if resolved != self.root and self.root not in resolved.parents:
+            raise ValueError(f"Path escapes run store root: {resolved}")
+
+    @staticmethod
     def _write_text(path: Path, text: str) -> None:
         last_error: PermissionError | None = None
         for attempt in range(3):
@@ -150,6 +173,10 @@ class RunStore:
                 if attempt < 2:
                     time.sleep(0.1 * (attempt + 1))
                     continue
-                raise
+                try:
+                    path.write_text(text, encoding="utf-8")
+                    return
+                except PermissionError:
+                    raise last_error
         if last_error is not None:
             raise last_error

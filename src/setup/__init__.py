@@ -1,1 +1,1 @@
-"""Setup wizard for Horizon configuration."""
+"""Setup wizard for Horizon Brief configuration."""

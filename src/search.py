@@ -39,7 +39,7 @@ async def search_hn(query: str, client: httpx.AsyncClient) -> List[dict]:
 async def search_reddit(query: str, client: httpx.AsyncClient) -> List[dict]:
     """Search Reddit JSON API. Returns list of {title, url, source, score, num_comments, subreddit, date}."""
     params = {"q": query, "sort": "relevance", "limit": 3, "t": "year"}
-    headers = {"User-Agent": "Horizon/1.0 (tech news aggregator)"}
+    headers = {"User-Agent": "HorizonBrief/1.0 (AI briefing aggregator)"}
     try:
         async with _reddit_semaphore:
             resp = await client.get(REDDIT_SEARCH_URL, params=params, headers=headers)
