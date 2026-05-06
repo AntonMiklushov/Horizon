@@ -137,7 +137,7 @@ Subreddits and users are fetched concurrently. Comments are sorted by score, lim
 
 **File**: `src/scrapers/twitter.py`
 
-Uses the [Apify](https://apify.com) platform to bypass Twitter's anti-scraping measures. The actor `altimis/scweet` is called via the Apify REST API.
+Uses the [Apify](https://apify.com) platform to bypass Twitter's anti-scraping measures. The actor `altimis~scweet` is called via the Apify REST API.
 
 Flow:
 1. POST to `/v2/acts/{actor_id}/runs` to trigger a run

@@ -107,6 +107,14 @@ You can also install the project in editable mode with pip:
 pip install -e .
 ```
 
+Install test and development extras when needed:
+
+```bash
+uv sync --extra dev
+```
+
+`dev` is currently defined as an optional extra in `pyproject.toml`, so use `uv sync --extra dev` for pytest and other development dependencies.
+
 On Windows, if the checkout is inside a Nextcloud, OneDrive, or similar synced folder, place uv's environment and cache outside the repository before `uv sync`:
 
 ```powershell
