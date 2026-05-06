@@ -142,7 +142,7 @@ class HorizonOrchestrator:
         Args:
             force_hours: Optional override for time window in hours
         """
-        self.console.print("[bold cyan]🌅 Horizon - Starting aggregation...[/bold cyan]\n")
+        self.console.print("[bold cyan]🌅 Horizon Brief - Starting aggregation...[/bold cyan]\n")
         run_timer = self.verbose_reporter.start(
             "run",
             provider=self.config.ai.provider.value,
@@ -442,7 +442,7 @@ class HorizonOrchestrator:
                     self.console.print(f"📧 Sending {lang.upper()} email summary...")
                     subscribers = self.storage.load_subscribers()
                     self.verbose_reporter.event("summary.email", language=lang, subscribers=len(subscribers))
-                    subject = f"Horizon Summary ({lang.upper()}) - {today}"
+                    subject = f"Horizon Brief Summary ({lang.upper()}) - {today}"
                     self.email_manager.send_daily_summary(
                         summary,
                         subject,
@@ -470,7 +470,7 @@ class HorizonOrchestrator:
                     self.verbose_reporter.event("summary.webhook", language=lang, status="disabled")
 
             self.verbose_reporter.end("summaries", summary_timer, saved=saved_summaries)
-            self.console.print("[bold green]✅ Horizon completed successfully![/bold green]")
+            self.console.print("[bold green]✅ Horizon Brief completed successfully![/bold green]")
             usage = get_usage_snapshot()
             if usage.total_tokens > 0:
                 self.console.print(
@@ -666,7 +666,7 @@ class HorizonOrchestrator:
     def _summary_title(self, date: str, language: str) -> str:
         if self.config.personal_briefing.enabled and language == self.config.personal_briefing.language:
             return f"Вечерняя сводка - {date}"
-        return f"Horizon Summary: {date} ({language.upper()})"
+        return f"Horizon Brief Summary: {date} ({language.upper()})"
 
     def _publish_jekyll_post(self, date: str, language: str, content: str):
         posts_dir = self.storage.resolve_runtime_path(self.config.publishing.docs_dir) / "_posts"

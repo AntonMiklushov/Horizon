@@ -68,7 +68,7 @@ def test_generate_summary_supports_russian_labels():
         )
     )
 
-    assert result.startswith("# Ежедневная сводка Horizon")
+    assert result.startswith("# Ежедневная сводка Horizon Brief")
     assert "Из 10 материалов выбрано важных: 1" in result
     assert "**Источник**" not in result
     assert "**Теги**: `#AI`, `#News`" in result

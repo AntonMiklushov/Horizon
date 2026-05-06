@@ -1,4 +1,4 @@
-"""Safe web form parsing for Horizon configuration."""
+"""Safe web form parsing for Horizon Brief configuration."""
 
 from __future__ import annotations
 

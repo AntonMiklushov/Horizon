@@ -1,4 +1,4 @@
-"""MCP server entrypoint for Horizon."""
+"""MCP server entrypoint for Horizon Brief."""
 
 from __future__ import annotations
 
@@ -135,7 +135,7 @@ async def hz_validate_config(
     sources: list[str] | None = None,
     check_env: bool = True,
 ) -> dict[str, Any]:
-    """Validate Horizon config and required environment variables."""
+    """Validate Horizon Brief config and required environment variables."""
 
     return await _run_tool(
         "hz_validate_config",
@@ -444,7 +444,7 @@ async def hz_send_webhook(
     """Send a webhook notification with the given variables.
 
     Uses the webhook URL (from environment variable), request_body template,
-    and headers from the Horizon config. Template variables #{date}, #{language},
+    and headers from the Horizon Brief config. Template variables #{date}, #{language},
     #{important_items}, #{all_items}, #{result}, #{timestamp},
     #{summary} are replaced in the URL and request_body before sending.
     """
@@ -521,7 +521,7 @@ def r_run_summary(run_id: str, language: str) -> dict[str, Any]:
 
 @mcp.resource("horizon://config/effective")
 def r_effective_config() -> dict[str, Any]:
-    """Effective default config resolved from local Horizon path."""
+    """Effective default config resolved from local Horizon Brief path."""
 
     return _resource_result("horizon://config/effective", service.get_effective_config)
 

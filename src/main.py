@@ -1,4 +1,4 @@
-"""CLI entry point for Horizon."""
+"""CLI entry point for Horizon Brief."""
 
 import argparse
 import asyncio
@@ -26,14 +26,14 @@ def print_banner():
  | |  | | (_) | |  | |/ / | (_) | | | |
  |_|  |_|\___/|_|  |_/___| \___/|_| |_|
 [/bold blue]
-[cyan]  AI-Driven Information Aggregation System[/cyan]
+[cyan]  Horizon Brief - AI briefing layer[/cyan]
     """
     console.print(banner)
 
 
 def build_parser() -> argparse.ArgumentParser:
     """Build the CLI argument parser."""
-    parser = argparse.ArgumentParser(description="Horizon - AI-Driven Information Aggregation System")
+    parser = argparse.ArgumentParser(description="Horizon Brief - AI briefing layer on top of Horizon")
     parser.add_argument("--hours", type=int, help="Force fetch from last N hours")
     parser.add_argument("--config", help="Path to config.json (defaults to data/config.json)")
     parser.add_argument("--data-dir", help="Directory for runtime data and summaries")

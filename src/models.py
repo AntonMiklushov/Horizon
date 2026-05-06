@@ -1,4 +1,4 @@
-"""Core data models for Horizon."""
+"""Core data models for Horizon Brief."""
 
 from datetime import datetime, timezone
 from enum import Enum
@@ -125,7 +125,7 @@ class RedditConfig(StrictModel):
     subreddits: List[RedditSubredditConfig] = Field(default_factory=list)
     users: List[RedditUserConfig] = Field(default_factory=list)
     fetch_comments: int = Field(default=5, ge=0, le=20)
-    user_agent: str = "Horizon/0.1 (+https://github.com/thysrael/horizon; configure REDDIT_USER_AGENT)"
+    user_agent: str = "HorizonBrief/0.1 (+https://github.com/AntonMiklushov/Horizon; configure REDDIT_USER_AGENT)"
     user_agent_env: str = "REDDIT_USER_AGENT"
     client_id_env: Optional[str] = "REDDIT_CLIENT_ID"
     client_secret_env: Optional[str] = "REDDIT_CLIENT_SECRET"
@@ -191,7 +191,7 @@ class EmailConfig(StrictModel):
     smtp_port: int = Field(default=465, ge=1, le=65535)
     email_address: str
     password_env: str = "EMAIL_PASSWORD"
-    sender_name: str = "Horizon Daily"
+    sender_name: str = "Horizon Brief Daily"
     subscribe_keyword: str = "SUBSCRIBE"
     unsubscribe_keyword: str = "UNSUBSCRIBE"
     enabled: bool = False

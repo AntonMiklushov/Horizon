@@ -1,4 +1,4 @@
-"""Application service for staged Horizon pipeline execution."""
+"""Application service for staged Horizon Brief pipeline execution."""
 
 from __future__ import annotations
 
@@ -883,7 +883,7 @@ class HorizonPipelineService:
             "all_items": all_items,
             "result": result,
             "timestamp": str(int(datetime.now(timezone.utc).timestamp())),
-            "message_title": f"Horizon {date} webhook",
+            "message_title": f"Horizon Brief {date} webhook",
             "message_kind": "manual",
             "summary": summary,
         }

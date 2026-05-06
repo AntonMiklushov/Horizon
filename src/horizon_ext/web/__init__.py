@@ -1,2 +1,1 @@
-"""Local web dashboard for Horizon."""
-
+"""Local web dashboard for Horizon Brief."""

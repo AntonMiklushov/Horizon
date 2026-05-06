@@ -1,4 +1,4 @@
-"""FastAPI application for the local Horizon dashboard."""
+"""FastAPI application for the local Horizon Brief dashboard."""
 
 from __future__ import annotations
 
@@ -50,7 +50,7 @@ def create_app(
 ) -> FastAPI:
     """Create the local dashboard app."""
 
-    app = FastAPI(title="Horizon Web", docs_url=None, redoc_url=None)
+    app = FastAPI(title="Horizon Brief Web", docs_url=None, redoc_url=None)
     app.state.config_path = str(Path(config_path).expanduser().resolve()) if config_path else None
     app.state.data_dir = str(Path(data_dir).expanduser().resolve())
     app.state.storage = StorageManager(data_dir=app.state.data_dir, config_path=app.state.config_path)

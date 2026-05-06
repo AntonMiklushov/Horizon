@@ -16,7 +16,7 @@ logger = logging.getLogger(__name__)
 
 REDDIT_BASE = "https://www.reddit.com"
 REDDIT_OAUTH_BASE = "https://oauth.reddit.com"
-DEFAULT_USER_AGENT = "Horizon/0.1 (+https://github.com/thysrael/horizon; configure REDDIT_USER_AGENT)"
+DEFAULT_USER_AGENT = "HorizonBrief/0.1 (+https://github.com/AntonMiklushov/Horizon; configure REDDIT_USER_AGENT)"
 REDDIT_HEADERS = {
     "User-Agent": DEFAULT_USER_AGENT,
     "Accept": "application/json,text/plain,*/*",

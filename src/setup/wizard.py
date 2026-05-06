@@ -1,4 +1,4 @@
-"""Interactive setup wizard for Horizon configuration."""
+"""Interactive setup wizard for Horizon Brief configuration."""
 
 import os
 import sys

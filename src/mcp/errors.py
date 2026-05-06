@@ -1,4 +1,4 @@
-"""Error definitions for Horizon MCP service."""
+"""Error definitions for Horizon Brief MCP service."""
 
 from __future__ import annotations
 

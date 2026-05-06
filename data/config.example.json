@@ -31,7 +31,7 @@
     "imap_server": "imap.qq.com",
     "imap_port": 993,
     "email_address": "xxx@qq.com",
-    "sender_name": "Horizon Daily",
+    "sender_name": "Horizon Brief Daily",
     "subscribe_keyword": "SUBSCRIBE",
     "unsubscribe_keyword": "UNSUBSCRIBE"
   },
@@ -136,7 +136,7 @@
           "elements": [
             {
               "tag": "markdown",
-              "content": "Horizon generation result: #{result}\nImportant items: #{important_items}/#{all_items}"
+              "content": "Horizon Brief generation result: #{result}\nImportant items: #{important_items}/#{all_items}"
             },
             {
               "tag": "hr"
