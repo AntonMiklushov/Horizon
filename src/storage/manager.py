@@ -2,6 +2,7 @@
 
 import json
 import shutil
+from datetime import datetime, timezone
 from pathlib import Path
 
 from ..models import Config
@@ -30,7 +31,7 @@ class StorageManager:
                 f"Please create it based on the template in README.md"
             )
 
-        with open(self.config_path, "r", encoding="utf-8") as f:
+        with open(self.config_path, "r", encoding="utf-8-sig") as f:
             data = json.load(f)
 
         return Config.model_validate(data)
@@ -46,7 +47,16 @@ class StorageManager:
             Path to the saved config file.
         """
         if backup and self.config_path.exists():
-            shutil.copy2(self.config_path, self.config_path.with_suffix(".json.bak"))
+            backup_path = self.config_path.with_suffix(".json.bak")
+            try:
+                shutil.copy2(self.config_path, backup_path)
+            except OSError:
+                timestamp = datetime.now(timezone.utc).strftime("%Y%m%dT%H%M%SZ")
+                fallback_path = self.config_path.with_name(f"{self.config_path.name}.{timestamp}.bak")
+                try:
+                    shutil.copy2(self.config_path, fallback_path)
+                except OSError:
+                    pass
 
         with open(self.config_path, "w", encoding="utf-8") as f:
             json.dump(config.model_dump(mode="json"), f, indent=2, ensure_ascii=False)

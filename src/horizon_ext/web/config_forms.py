@@ -7,6 +7,7 @@ from typing import Any, Iterable
 from pydantic import ValidationError
 
 from ...models import (
+    AIProvider,
     Config,
     GitHubSourceConfig,
     HackerNewsConfig,
@@ -22,6 +23,23 @@ from ...models import (
 
 OUTPUT_FORMATS = ("markdown", "html", "email_html")
 STORY_LISTS = ("top", "new", "best", "ask", "show", "job")
+LLM_PROVIDER_MODES = ("codex_cli", "lm_studio", "openai", "anthropic", "gemini", "ali", "doubao", "minimax")
+LM_STUDIO_DEFAULT_BASE_URL = "http://127.0.0.1:1234/v1"
+LM_STUDIO_DEFAULT_MODEL = "local-model"
+CODEX_REASONING_EFFORTS = ("minimal", "low", "medium", "high")
+API_KEY_ENV_DEFAULTS = {
+    "openai": "OPENAI_API_KEY",
+    "anthropic": "ANTHROPIC_API_KEY",
+    "gemini": "GOOGLE_API_KEY",
+    "ali": "DASHSCOPE_API_KEY",
+    "doubao": "DOUBAO_API_KEY",
+    "minimax": "MINIMAX_API_KEY",
+}
+BASE_URL_DEFAULTS = {
+    "ali": "https://dashscope.aliyuncs.com/compatible-mode/v1",
+    "doubao": "https://ark.cn-beijing.volces.com/api/v3",
+    "minimax": "https://api.minimax.io/v1",
+}
 
 
 class ConfigFormError(ValueError):
@@ -67,6 +85,7 @@ def apply_basic_settings(config: Config, form: Any) -> Config:
     clone.filtering.ai_score_threshold = _float(form, "ai_score_threshold", minimum=0.0, maximum=10.0)
     clone.filtering.max_items_per_source = _int(form, "max_items_per_source", 5, minimum=1, maximum=100)
     clone.ai.languages = _csv(form, "languages", required=True)
+    _apply_ai_settings(clone, form)
     clone.rendering.output_formats = _choices(form, "output_formats", OUTPUT_FORMATS, required=True)
     clone.publishing.enabled = _checked(form, "publishing_enabled")
     return _validated(clone)
@@ -96,6 +115,8 @@ def _github_sources(form: Any) -> list[GitHubSourceConfig]:
     sources = []
     for index in range(_int(form, "github_count", 0, minimum=0, maximum=500)):
         prefix = f"github_{index}"
+        if _checked(form, f"{prefix}_remove"):
+            continue
         source = _github_source_from_prefix(form, prefix)
         if source:
             sources.append(source)
@@ -132,6 +153,8 @@ def _rss_sources(form: Any) -> list[RSSSourceConfig]:
     sources = []
     for index in range(_int(form, "rss_count", 0, minimum=0, maximum=1000)):
         prefix = f"rss_{index}"
+        if _checked(form, f"{prefix}_remove"):
+            continue
         source = _rss_source_from_prefix(form, prefix)
         if source:
             sources.append(source)
@@ -161,6 +184,8 @@ def _reddit_config(form: Any) -> RedditConfig:
     subreddits = []
     for index in range(_int(form, "reddit_subreddit_count", 0, minimum=0, maximum=500)):
         prefix = f"reddit_subreddit_{index}"
+        if _checked(form, f"{prefix}_remove"):
+            continue
         name = _str(form, f"{prefix}_name")
         if not name:
             raise ConfigFormError("Reddit subreddit rows require a subreddit name.")
@@ -181,6 +206,8 @@ def _reddit_config(form: Any) -> RedditConfig:
     users = []
     for index in range(_int(form, "reddit_user_count", 0, minimum=0, maximum=500)):
         prefix = f"reddit_user_{index}"
+        if _checked(form, f"{prefix}_remove"):
+            continue
         username = _str(form, f"{prefix}_username")
         if not username:
             raise ConfigFormError("Reddit user rows require a username.")
@@ -208,6 +235,8 @@ def _telegram_channels(form: Any) -> list[TelegramChannelConfig]:
     channels = []
     for index in range(_int(form, "telegram_count", 0, minimum=0, maximum=500)):
         prefix = f"telegram_{index}"
+        if _checked(form, f"{prefix}_remove"):
+            continue
         channel = _str(form, f"{prefix}_channel")
         if not channel:
             raise ConfigFormError("Telegram rows require a channel.")
@@ -247,6 +276,45 @@ def _validated(config: Config) -> Config:
         return Config.model_validate(config.model_dump(mode="json"))
     except ValidationError as exc:
         raise ConfigFormError(str(exc)) from exc
+
+
+def _apply_ai_settings(config: Config, form: Any) -> None:
+    provider_mode = _str(form, "llm_provider_mode")
+    if not provider_mode:
+        return
+    if provider_mode not in LLM_PROVIDER_MODES:
+        raise ConfigFormError(f"Unsupported LLM provider: {provider_mode}")
+
+    model = _str(form, "ai_model")
+    base_url = _str(form, "ai_base_url")
+    api_key_env = _str(form, "ai_api_key_env")
+
+    if provider_mode == "lm_studio":
+        config.ai.provider = AIProvider.OPENAI
+        config.ai.model = model or LM_STUDIO_DEFAULT_MODEL
+        config.ai.base_url = base_url or LM_STUDIO_DEFAULT_BASE_URL
+        config.ai.api_key_env = None
+        config.ai.codex_extra_args = []
+        return
+
+    if provider_mode == AIProvider.CODEX_CLI.value:
+        config.ai.provider = AIProvider.CODEX_CLI
+        config.ai.model = model or "codex-cli"
+        config.ai.base_url = None
+        config.ai.api_key_env = None
+        effort = _str(form, "codex_reasoning_effort") or "medium"
+        if effort not in CODEX_REASONING_EFFORTS:
+            raise ConfigFormError(f"Unsupported Codex reasoning effort: {effort}")
+        config.ai.codex_extra_args = ["-c", f'model_reasoning_effort="{effort}"']
+        return
+
+    provider = AIProvider(provider_mode)
+    config.ai.provider = provider
+    if model:
+        config.ai.model = model
+    config.ai.base_url = base_url or BASE_URL_DEFAULTS.get(provider_mode) or None
+    config.ai.api_key_env = api_key_env or API_KEY_ENV_DEFAULTS.get(provider_mode)
+    config.ai.codex_extra_args = []
 
 
 def _checked(form: Any, key: str) -> bool:

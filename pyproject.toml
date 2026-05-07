@@ -66,6 +66,7 @@ exclude = [
     "/.pytest_cache",
     "/.pytest-tmp",
     "/.pytest-manual-tmp",
+    "/pytest-cache-files-*",
     "/data/config.json",
     "/data/*.bak",
     "/data/mcp-runs",

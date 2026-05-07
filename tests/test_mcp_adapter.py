@@ -54,6 +54,18 @@ def test_source_filter_supports_twitter() -> None:
     assert filtered.sources.github == []
 
 
+def test_mcp_load_config_accepts_utf8_bom(tmp_path: Path) -> None:
+    repo_root = Path(__file__).resolve().parents[1]
+    runtime = load_runtime(repo_root)
+    config_path = tmp_path / "config.json"
+    payload = (repo_root / "data" / "config.example.json").read_text(encoding="utf-8")
+    config_path.write_text(payload, encoding="utf-8-sig")
+
+    config = load_config(runtime, config_path)
+
+    assert config.version == "1.0"
+
+
 def test_load_mcp_secrets_loads_generic_env_keys(tmp_path: Path, monkeypatch) -> None:
     secrets_path = tmp_path / "mcp.secrets.json"
     secrets_path.write_text(

@@ -169,6 +169,27 @@ def test_codex_cli_batch_progress_tracks_batches_and_item_counts(monkeypatch):
     assert "Analyzed 2/2 items via Codex batches" in descriptions
 
 
+def test_codex_cli_chunks_are_bounded_by_item_count(monkeypatch):
+    monkeypatch.setattr(analyzer_module, "CODEX_BATCH_MAX_ITEMS", 2)
+
+    analyzer = ContentAnalyzer(SimpleNamespace())
+    chunks = analyzer._chunk_items_for_codex(
+        [
+            _make_item("rss:test:1"),
+            _make_item("rss:test:2"),
+            _make_item("rss:test:3"),
+            _make_item("rss:test:4"),
+            _make_item("rss:test:5"),
+        ]
+    )
+
+    assert [[item.id for item in chunk] for chunk in chunks] == [
+        ["rss:test:1", "rss:test:2"],
+        ["rss:test:3", "rss:test:4"],
+        ["rss:test:5"],
+    ]
+
+
 def test_codex_cli_batch_failure_falls_back_to_item_analysis(monkeypatch):
     class FakeCodexClient:
         config = SimpleNamespace(provider=AIProvider.CODEX_CLI, throttle_sec=0.0)

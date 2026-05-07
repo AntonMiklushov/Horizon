@@ -6,7 +6,7 @@ import logging
 import os
 import re
 from datetime import datetime, timezone
-from typing import List
+from typing import Any, List
 from email.utils import parsedate_to_datetime
 from urllib.parse import parse_qsl, urlencode, urlsplit, urlunsplit
 import httpx
@@ -40,9 +40,18 @@ def _redact_feed_url(url: str) -> str:
     return urlunsplit((parts.scheme, parts.netloc, parts.path, query, parts.fragment))
 
 
-def _redact_error_text(error: Exception, expanded_url: str) -> str:
+def _redact_error_text(error: BaseException, expanded_url: str) -> str:
     safe_url = _redact_feed_url(expanded_url)
     return str(error).replace(expanded_url, safe_url)
+
+
+class RSSFetchError(RuntimeError):
+    """Raised when RSS fetching cannot produce a trustworthy source result."""
+
+    def __init__(self, message: str, diagnostics: list[dict[str, Any]]):
+        super().__init__(message)
+        self.safe_detail = message
+        self.diagnostics = diagnostics
 
 
 class RSSScraper(BaseScraper):
@@ -56,6 +65,8 @@ class RSSScraper(BaseScraper):
             http_client: Shared async HTTP client
         """
         super().__init__({"sources": sources}, http_client)
+        self.fetch_diagnostics: list[dict[str, Any]] = []
+        self.fetch_summary: dict[str, int] = {"attempted": 0, "failed": 0, "items": 0}
 
     async def fetch(self, since: datetime) -> List[ContentItem]:
         """Fetch RSS feed items.
@@ -67,14 +78,26 @@ class RSSScraper(BaseScraper):
             List[ContentItem]: Fetched content items
         """
         items = []
+        self.fetch_diagnostics = []
+        self.fetch_summary = {"attempted": 0, "failed": 0, "items": 0}
         sources = self.config["sources"]
+        attempted = 0
 
         for source in sources:
             if not source.enabled:
                 continue
 
+            attempted += 1
             feed_items = await self._fetch_feed(source, since)
             items.extend(feed_items)
+
+        failed = sum(1 for item in self.fetch_diagnostics if item.get("status") == "failed")
+        self.fetch_summary = {"attempted": attempted, "failed": failed, "items": len(items)}
+        if attempted > 0 and failed == attempted:
+            raise RSSFetchError(
+                self._failure_summary(attempted),
+                self.fetch_diagnostics,
+            )
 
         return items
 
@@ -109,6 +132,10 @@ class RSSScraper(BaseScraper):
 
             # Parse feed
             feed = feedparser.parse(response.text)
+            if getattr(feed, "bozo", False) and not feed.entries:
+                error = getattr(feed, "bozo_exception", None) or ValueError("Feed parser returned no entries.")
+                self._record_feed_failure(source, feed_url, error, "parse")
+                return items
 
             for entry in feed.entries:
                 # Parse published date
@@ -151,6 +178,7 @@ class RSSScraper(BaseScraper):
                 items.append(item)
 
         except httpx.HTTPError as e:
+            self._record_feed_failure(source, feed_url, e, "fetch")
             logger.warning(
                 "Error fetching RSS feed %s (%s): %s",
                 source.name,
@@ -158,6 +186,7 @@ class RSSScraper(BaseScraper):
                 _redact_error_text(e, feed_url),
             )
         except Exception as e:
+            self._record_feed_failure(source, feed_url, e, "parse")
             logger.warning(
                 "Error parsing RSS feed %s (%s): %s",
                 source.name,
@@ -166,6 +195,33 @@ class RSSScraper(BaseScraper):
             )
 
         return items
+
+    def _record_feed_failure(
+        self,
+        source: RSSSourceConfig,
+        feed_url: str,
+        error: BaseException,
+        phase: str,
+    ) -> None:
+        self.fetch_diagnostics.append(
+            {
+                "status": "failed",
+                "phase": phase,
+                "source": source.name,
+                "url": _redact_feed_url(feed_url),
+                "error": type(error).__name__,
+                "message": _redact_error_text(error, feed_url),
+            }
+        )
+
+    def _failure_summary(self, attempted: int) -> str:
+        examples = []
+        for diagnostic in self.fetch_diagnostics[:3]:
+            source = diagnostic.get("source") or "RSS feed"
+            error = diagnostic.get("error") or "error"
+            examples.append(f"{source}: {error}")
+        suffix = f" First failures: {'; '.join(examples)}." if examples else ""
+        return f"All {attempted} enabled RSS feeds failed.{suffix}"
 
     def _parse_date(self, entry: dict) -> datetime:
         """Parse publication date from feed entry.

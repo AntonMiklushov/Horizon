@@ -1,148 +1,463 @@
 {% extends "base.html" %}
 {% block title %}Sources{% endblock %}
 {% block content %}
-<h1>Sources</h1>
+<div class="page-header">
+  <div>
+    <h1>Sources</h1>
+    <p class="muted">Edit enabled state, limits, and source lists without leaving the page.</p>
+  </div>
+  <div class="header-actions">
+    <button type="submit" form="source-settings-form" data-testid="save-sources-top">Save Sources</button>
+    <a class="button secondary" href="/settings/config">Full Config</a>
+  </div>
+</div>
+
 {% if saved %}<div class="notice saved">Sources saved.</div>{% endif %}
 {% if error %}<div class="notice error">{{ error }}</div>{% endif %}
 {% if config_error %}<div class="notice error">{{ config_error }}</div>{% endif %}
 
 {% if config %}
-<form method="post">
-  <section class="panel">
-    <h2>GitHub</h2>
-    <input type="hidden" name="github_count" value="{{ config.sources.github | length }}">
-    {% for source in config.sources.github %}
-      {% set i = loop.index0 %}
-      <div class="row">
-        <div class="span-2"><label>Enabled</label><label class="checkline"><input type="checkbox" name="github_{{ i }}_enabled" {% if source.enabled %}checked{% endif %}> On</label></div>
-        <div class="span-2"><label>Type</label><select name="github_{{ i }}_type"><option value="user_events" {% if source.type == "user_events" %}selected{% endif %}>User</option><option value="repo_releases" {% if source.type == "repo_releases" %}selected{% endif %}>Releases</option></select></div>
-        <div class="span-3"><label>Username</label><input name="github_{{ i }}_username" type="text" value="{{ source.username or '' }}"></div>
-        <div class="span-2"><label>Owner</label><input name="github_{{ i }}_owner" type="text" value="{{ source.owner or '' }}"></div>
-        <div class="span-3"><label>Repo</label><input name="github_{{ i }}_repo" type="text" value="{{ source.repo or '' }}"></div>
+<form id="source-settings-form" method="post" data-testid="source-settings-form">
+  <div class="source-manager" data-source-manager data-default-source="rss">
+    <aside class="source-sidebar" aria-label="Source types">
+      <div class="source-sidebar-head">
+        <span class="muted">Source Type</span>
+        <span class="source-total">{{ source_counts.values() | sum }} enabled</span>
       </div>
-    {% endfor %}
-    <h3>Add GitHub Source</h3>
-    <div class="row">
-      <div class="span-2"><label>Enabled</label><label class="checkline"><input type="checkbox" name="github_new_enabled" checked> On</label></div>
-      <div class="span-2"><label>Type</label><select name="github_new_type"><option value="user_events">User</option><option value="repo_releases">Releases</option></select></div>
-      <div class="span-3"><label>Username</label><input name="github_new_username" type="text"></div>
-      <div class="span-2"><label>Owner</label><input name="github_new_owner" type="text"></div>
-      <div class="span-3"><label>Repo</label><input name="github_new_repo" type="text"></div>
-    </div>
-  </section>
+      <div class="source-tabs" role="tablist" aria-orientation="vertical">
+        {% for item in [
+          ("github", "GitHub", config.sources.github | length, source_counts.get("github", 0)),
+          ("hackernews", "Hacker News", 1, source_counts.get("hackernews", 0)),
+          ("rss", "RSS", config.sources.rss | length, source_counts.get("rss", 0)),
+          ("reddit", "Reddit", (config.sources.reddit.subreddits | length) + (config.sources.reddit.users | length), source_counts.get("reddit", 0)),
+          ("telegram", "Telegram", config.sources.telegram.channels | length, source_counts.get("telegram", 0)),
+          ("twitter", "Twitter", (config.sources.twitter.users | length if config.sources.twitter else 0), source_counts.get("twitter", 0)),
+        ] %}
+          <button
+            type="button"
+            id="source-tab-{{ item[0] }}"
+            class="source-tab{% if item[0] == 'rss' %} active{% endif %}"
+            role="tab"
+            aria-controls="source-panel-{{ item[0] }}"
+            aria-selected="{{ 'true' if item[0] == 'rss' else 'false' }}"
+            data-source-tab="{{ item[0] }}"
+          >
+            <span>{{ item[1] }}</span>
+            <span class="source-tab-meta">{{ item[3] }}/{{ item[2] }}</span>
+          </button>
+        {% endfor %}
+      </div>
+    </aside>
 
-  <section class="panel">
-    <h2>Hacker News</h2>
-    <div class="row">
-      <div class="span-2"><label>Enabled</label><label class="checkline"><input type="checkbox" name="hackernews_enabled" {% if config.sources.hackernews.enabled %}checked{% endif %}> On</label></div>
-      <div class="span-3"><label>Stories</label><input name="hackernews_fetch_top_stories" type="number" min="1" max="500" value="{{ config.sources.hackernews.fetch_top_stories }}"></div>
-      <div class="span-3"><label>Min Score</label><input name="hackernews_min_score" type="number" min="0" value="{{ config.sources.hackernews.min_score }}"></div>
-      <div class="span-4"><label>Lists</label>
-        <div class="checks">
-          {% for list_name in ["top", "new", "best", "ask", "show", "job"] %}
-            <label class="checkline"><input type="checkbox" name="hackernews_story_lists" value="{{ list_name }}" {% if list_name in config.sources.hackernews.story_lists %}checked{% endif %}> {{ list_name }}</label>
-          {% endfor %}
+    <div class="source-content">
+      <section
+        id="source-panel-github"
+        class="source-panel"
+        role="tabpanel"
+        aria-labelledby="source-tab-github"
+        data-source-panel="github"
+        hidden
+      >
+        <div class="source-panel-header">
+          <div>
+            <h2>GitHub</h2>
+            <p class="muted">Track user events or repository releases.</p>
+          </div>
+          <span class="pill">{{ source_counts.get("github", 0) }} enabled / {{ config.sources.github | length }} configured</span>
         </div>
-      </div>
-    </div>
-    <label class="checkline"><input type="checkbox" name="hackernews_include_jobs" {% if config.sources.hackernews.include_jobs %}checked{% endif %}> Include jobs</label>
-  </section>
+        <input type="hidden" name="github_count" value="{{ config.sources.github | length }}">
+        <div class="source-table-wrap">
+          <table class="source-table">
+            <thead>
+              <tr>
+                <th class="col-check">On</th>
+                <th>Type</th>
+                <th>Username</th>
+                <th>Owner</th>
+                <th>Repo</th>
+                <th class="col-remove">Remove</th>
+              </tr>
+            </thead>
+            <tbody>
+              {% for source in config.sources.github %}
+                {% set i = loop.index0 %}
+                {% set n = loop.index %}
+                <tr>
+                  <td>
+                    <label class="sr-only" for="github_{{ i }}_enabled">GitHub {{ n }} enabled</label>
+                    <input id="github_{{ i }}_enabled" type="checkbox" name="github_{{ i }}_enabled" {% if source.enabled %}checked{% endif %}>
+                  </td>
+                  <td>
+                    <label class="sr-only" for="github_{{ i }}_type">GitHub {{ n }} type</label>
+                    <select id="github_{{ i }}_type" name="github_{{ i }}_type" class="table-input">
+                      <option value="user_events" {% if source.type == "user_events" %}selected{% endif %}>User events</option>
+                      <option value="repo_releases" {% if source.type == "repo_releases" %}selected{% endif %}>Repo releases</option>
+                    </select>
+                  </td>
+                  <td>
+                    <label class="sr-only" for="github_{{ i }}_username">GitHub {{ n }} username</label>
+                    <input id="github_{{ i }}_username" name="github_{{ i }}_username" class="table-input" type="text" value="{{ source.username or '' }}">
+                  </td>
+                  <td>
+                    <label class="sr-only" for="github_{{ i }}_owner">GitHub {{ n }} owner</label>
+                    <input id="github_{{ i }}_owner" name="github_{{ i }}_owner" class="table-input" type="text" value="{{ source.owner or '' }}">
+                  </td>
+                  <td>
+                    <label class="sr-only" for="github_{{ i }}_repo">GitHub {{ n }} repo</label>
+                    <input id="github_{{ i }}_repo" name="github_{{ i }}_repo" class="table-input" type="text" value="{{ source.repo or '' }}">
+                  </td>
+                  <td>
+                    <label class="checkline remove-line" for="github_{{ i }}_remove"><input id="github_{{ i }}_remove" type="checkbox" name="github_{{ i }}_remove"> Remove</label>
+                  </td>
+                </tr>
+              {% else %}
+                <tr class="empty-row"><td colspan="6">No GitHub sources configured.</td></tr>
+              {% endfor %}
+            </tbody>
+            <tfoot>
+              <tr class="add-row">
+                <td><label class="sr-only" for="github_new_enabled">New GitHub enabled</label><input id="github_new_enabled" type="checkbox" name="github_new_enabled" checked></td>
+                <td><label class="sr-only" for="github_new_type">New GitHub type</label><select id="github_new_type" name="github_new_type" class="table-input"><option value="user_events">User events</option><option value="repo_releases">Repo releases</option></select></td>
+                <td><label class="sr-only" for="github_new_username">New GitHub username</label><input id="github_new_username" name="github_new_username" class="table-input" type="text" placeholder="username"></td>
+                <td><label class="sr-only" for="github_new_owner">New GitHub owner</label><input id="github_new_owner" name="github_new_owner" class="table-input" type="text" placeholder="owner"></td>
+                <td><label class="sr-only" for="github_new_repo">New GitHub repo</label><input id="github_new_repo" name="github_new_repo" class="table-input" type="text" placeholder="repo"></td>
+                <td class="muted">Add row</td>
+              </tr>
+            </tfoot>
+          </table>
+        </div>
+      </section>
 
-  <section class="panel">
-    <h2>RSS</h2>
-    <input type="hidden" name="rss_count" value="{{ config.sources.rss | length }}">
-    {% for source in config.sources.rss %}
-      {% set i = loop.index0 %}
-      <div class="row">
-        <div class="span-2"><label>Enabled</label><label class="checkline"><input type="checkbox" name="rss_{{ i }}_enabled" {% if source.enabled %}checked{% endif %}> On</label></div>
-        <div class="span-3"><label>Name</label><input name="rss_{{ i }}_name" type="text" value="{{ source.name }}"></div>
-        <div class="span-4"><label>URL</label><input name="rss_{{ i }}_url" type="url" value="{{ source.url }}"></div>
-        <div class="span-2"><label>Category</label><input name="rss_{{ i }}_category" type="text" value="{{ source.category or '' }}"></div>
-        <div class="span-1"><label>Policy</label><select name="rss_{{ i }}_undated_policy"><option value="drop" {% if source.undated_policy == "drop" %}selected{% endif %}>drop</option><option value="include_with_low_freshness" {% if source.undated_policy == "include_with_low_freshness" %}selected{% endif %}>low</option><option value="fetched_at" {% if source.undated_policy == "fetched_at" %}selected{% endif %}>now</option></select></div>
-      </div>
-    {% endfor %}
-    <h3>Add RSS</h3>
-    <div class="row">
-      <div class="span-2"><label>Enabled</label><label class="checkline"><input type="checkbox" name="rss_new_enabled" checked> On</label></div>
-      <div class="span-3"><label>Name</label><input name="rss_new_name" type="text"></div>
-      <div class="span-5"><label>URL</label><input name="rss_new_url" type="url"></div>
-      <div class="span-2"><label>Category</label><input name="rss_new_category" type="text"></div>
-      <input type="hidden" name="rss_new_undated_policy" value="drop">
-    </div>
-  </section>
+      <section
+        id="source-panel-hackernews"
+        class="source-panel"
+        role="tabpanel"
+        aria-labelledby="source-tab-hackernews"
+        data-source-panel="hackernews"
+        hidden
+      >
+        <div class="source-panel-header">
+          <div>
+            <h2>Hacker News</h2>
+            <p class="muted">Tune story lists, score threshold, and jobs.</p>
+          </div>
+          <span class="pill">{{ "enabled" if config.sources.hackernews.enabled else "disabled" }}</span>
+        </div>
+        <div class="compact-settings-grid">
+          <label class="checkline" for="hackernews_enabled"><input id="hackernews_enabled" type="checkbox" name="hackernews_enabled" {% if config.sources.hackernews.enabled %}checked{% endif %}> Enabled</label>
+          <label for="hackernews_fetch_top_stories">Hacker News stories<input id="hackernews_fetch_top_stories" name="hackernews_fetch_top_stories" type="number" min="1" max="500" value="{{ config.sources.hackernews.fetch_top_stories }}"></label>
+          <label for="hackernews_min_score">Minimum score<input id="hackernews_min_score" name="hackernews_min_score" type="number" min="0" value="{{ config.sources.hackernews.min_score }}"></label>
+          <label class="checkline" for="hackernews_include_jobs"><input id="hackernews_include_jobs" type="checkbox" name="hackernews_include_jobs" {% if config.sources.hackernews.include_jobs %}checked{% endif %}> Include jobs</label>
+        </div>
+        <fieldset class="source-fieldset">
+          <legend>Story lists</legend>
+          <div class="checks">
+            {% for list_name in ["top", "new", "best", "ask", "show", "job"] %}
+              <label class="checkline" for="hackernews_story_lists_{{ list_name }}"><input id="hackernews_story_lists_{{ list_name }}" type="checkbox" name="hackernews_story_lists" value="{{ list_name }}" {% if list_name in config.sources.hackernews.story_lists %}checked{% endif %}> {{ list_name }}</label>
+            {% endfor %}
+          </div>
+        </fieldset>
+      </section>
 
-  <section class="panel">
-    <h2>Reddit</h2>
-    <div class="row">
-      <div class="span-2"><label>Enabled</label><label class="checkline"><input type="checkbox" name="reddit_enabled" {% if config.sources.reddit.enabled %}checked{% endif %}> On</label></div>
-      <div class="span-3"><label>Comments</label><input name="reddit_fetch_comments" type="number" min="0" max="20" value="{{ config.sources.reddit.fetch_comments }}"></div>
-    </div>
-    <h3>Subreddits</h3>
-    <input type="hidden" name="reddit_subreddit_count" value="{{ config.sources.reddit.subreddits | length }}">
-    {% for source in config.sources.reddit.subreddits %}
-      {% set i = loop.index0 %}
-      <div class="row">
-        <div class="span-2"><label>Enabled</label><label class="checkline"><input type="checkbox" name="reddit_subreddit_{{ i }}_enabled" {% if source.enabled %}checked{% endif %}> On</label></div>
-        <div class="span-3"><label>Name</label><input name="reddit_subreddit_{{ i }}_name" type="text" value="{{ source.subreddit }}"></div>
-        <div class="span-2"><label>Sort</label><input name="reddit_subreddit_{{ i }}_sort" type="text" value="{{ source.sort }}"></div>
-        <div class="span-2"><label>Window</label><input name="reddit_subreddit_{{ i }}_time_filter" type="text" value="{{ source.time_filter }}"></div>
-        <div class="span-1"><label>Limit</label><input name="reddit_subreddit_{{ i }}_fetch_limit" type="number" value="{{ source.fetch_limit }}"></div>
-        <div class="span-2"><label>Min Score</label><input name="reddit_subreddit_{{ i }}_min_score" type="number" value="{{ source.min_score }}"></div>
-      </div>
-    {% endfor %}
-    <div class="row">
-      <div class="span-4"><label>Add Subreddit</label><input name="reddit_subreddit_new_name" type="text"></div>
-    </div>
-    <h3>Users</h3>
-    <input type="hidden" name="reddit_user_count" value="{{ config.sources.reddit.users | length }}">
-    {% for source in config.sources.reddit.users %}
-      {% set i = loop.index0 %}
-      <div class="row">
-        <div class="span-2"><label>Enabled</label><label class="checkline"><input type="checkbox" name="reddit_user_{{ i }}_enabled" {% if source.enabled %}checked{% endif %}> On</label></div>
-        <div class="span-4"><label>Username</label><input name="reddit_user_{{ i }}_username" type="text" value="{{ source.username }}"></div>
-        <div class="span-3"><label>Sort</label><input name="reddit_user_{{ i }}_sort" type="text" value="{{ source.sort }}"></div>
-        <div class="span-3"><label>Limit</label><input name="reddit_user_{{ i }}_fetch_limit" type="number" value="{{ source.fetch_limit }}"></div>
-      </div>
-    {% endfor %}
-    <div class="row">
-      <div class="span-4"><label>Add User</label><input name="reddit_user_new_username" type="text"></div>
-    </div>
-  </section>
+      <section
+        id="source-panel-rss"
+        class="source-panel active"
+        role="tabpanel"
+        aria-labelledby="source-tab-rss"
+        data-source-panel="rss"
+      >
+        <div class="source-panel-header">
+          <div>
+            <h2>RSS</h2>
+            <p class="muted">Dense feed editing with inline remove and one add row.</p>
+          </div>
+          <span class="pill">{{ source_counts.get("rss", 0) }} enabled / {{ config.sources.rss | length }} configured</span>
+        </div>
+        <input type="hidden" name="rss_count" value="{{ config.sources.rss | length }}">
+        <div class="source-table-wrap">
+          <table class="source-table rss-source-table">
+            <thead>
+              <tr>
+                <th class="col-check">On</th>
+                <th>Name</th>
+                <th>URL</th>
+                <th>Category</th>
+                <th>Undated</th>
+                <th class="col-remove">Remove</th>
+              </tr>
+            </thead>
+            <tbody>
+              {% for source in config.sources.rss %}
+                {% set i = loop.index0 %}
+                {% set n = loop.index %}
+                <tr>
+                  <td>
+                    <label class="sr-only" for="rss_{{ i }}_enabled">RSS {{ n }} enabled</label>
+                    <input id="rss_{{ i }}_enabled" type="checkbox" name="rss_{{ i }}_enabled" {% if source.enabled %}checked{% endif %}>
+                  </td>
+                  <td>
+                    <label class="sr-only" for="rss_{{ i }}_name">RSS {{ n }} name</label>
+                    <input id="rss_{{ i }}_name" name="rss_{{ i }}_name" class="table-input" type="text" value="{{ source.name }}">
+                  </td>
+                  <td>
+                    <label class="sr-only" for="rss_{{ i }}_url">RSS {{ n }} URL</label>
+                    <input id="rss_{{ i }}_url" name="rss_{{ i }}_url" class="table-input" type="url" value="{{ source.url }}">
+                  </td>
+                  <td>
+                    <label class="sr-only" for="rss_{{ i }}_category">RSS {{ n }} category</label>
+                    <input id="rss_{{ i }}_category" name="rss_{{ i }}_category" class="table-input" type="text" value="{{ source.category or '' }}">
+                  </td>
+                  <td>
+                    <label class="sr-only" for="rss_{{ i }}_undated_policy">RSS {{ n }} undated policy</label>
+                    <select id="rss_{{ i }}_undated_policy" name="rss_{{ i }}_undated_policy" class="table-input">
+                      <option value="drop" {% if source.undated_policy == "drop" %}selected{% endif %}>drop</option>
+                      <option value="include_with_low_freshness" {% if source.undated_policy == "include_with_low_freshness" %}selected{% endif %}>low freshness</option>
+                      <option value="fetched_at" {% if source.undated_policy == "fetched_at" %}selected{% endif %}>fetched at</option>
+                    </select>
+                  </td>
+                  <td>
+                    <label class="checkline remove-line" for="rss_{{ i }}_remove"><input id="rss_{{ i }}_remove" type="checkbox" name="rss_{{ i }}_remove"> Remove</label>
+                  </td>
+                </tr>
+              {% else %}
+                <tr class="empty-row"><td colspan="6">No RSS feeds configured.</td></tr>
+              {% endfor %}
+            </tbody>
+            <tfoot>
+              <tr class="add-row">
+                <td><label class="sr-only" for="rss_new_enabled">New RSS enabled</label><input id="rss_new_enabled" type="checkbox" name="rss_new_enabled" checked></td>
+                <td><label class="sr-only" for="rss_new_name">New RSS name</label><input id="rss_new_name" name="rss_new_name" class="table-input" type="text" placeholder="Name"></td>
+                <td><label class="sr-only" for="rss_new_url">New RSS URL</label><input id="rss_new_url" name="rss_new_url" class="table-input" type="url" placeholder="https://example.com/feed.xml"></td>
+                <td><label class="sr-only" for="rss_new_category">New RSS category</label><input id="rss_new_category" name="rss_new_category" class="table-input" type="text" placeholder="Category"></td>
+                <td><input type="hidden" name="rss_new_undated_policy" value="drop"><span class="muted">drop</span></td>
+                <td class="muted">Add row</td>
+              </tr>
+            </tfoot>
+          </table>
+        </div>
+      </section>
 
-  <section class="panel">
-    <h2>Telegram</h2>
-    <div><label class="checkline"><input type="checkbox" name="telegram_enabled" {% if config.sources.telegram.enabled %}checked{% endif %}> Enabled</label></div>
-    <input type="hidden" name="telegram_count" value="{{ config.sources.telegram.channels | length }}">
-    {% for source in config.sources.telegram.channels %}
-      {% set i = loop.index0 %}
-      <div class="row">
-        <div class="span-2"><label>Enabled</label><label class="checkline"><input type="checkbox" name="telegram_{{ i }}_enabled" {% if source.enabled %}checked{% endif %}> On</label></div>
-        <div class="span-6"><label>Channel</label><input name="telegram_{{ i }}_channel" type="text" value="{{ source.channel }}"></div>
-        <div class="span-4"><label>Limit</label><input name="telegram_{{ i }}_fetch_limit" type="number" value="{{ source.fetch_limit }}"></div>
-      </div>
-    {% endfor %}
-    <div class="row">
-      <div class="span-4"><label>Add Channel</label><input name="telegram_new_channel" type="text"></div>
-    </div>
-  </section>
+      <section
+        id="source-panel-reddit"
+        class="source-panel"
+        role="tabpanel"
+        aria-labelledby="source-tab-reddit"
+        data-source-panel="reddit"
+        hidden
+      >
+        <div class="source-panel-header">
+          <div>
+            <h2>Reddit</h2>
+            <p class="muted">Edit global Reddit settings, subreddits, and users in one panel.</p>
+          </div>
+          <span class="pill">{{ source_counts.get("reddit", 0) }} enabled</span>
+        </div>
+        <div class="compact-settings-grid narrow">
+          <label class="checkline" for="reddit_enabled"><input id="reddit_enabled" type="checkbox" name="reddit_enabled" {% if config.sources.reddit.enabled %}checked{% endif %}> Enabled</label>
+          <label for="reddit_fetch_comments">Comments per post<input id="reddit_fetch_comments" name="reddit_fetch_comments" type="number" min="0" max="20" value="{{ config.sources.reddit.fetch_comments }}"></label>
+        </div>
 
-  <section class="panel">
-    <h2>Twitter</h2>
-    {% set twitter = config.sources.twitter %}
-    <div class="row">
-      <div class="span-2"><label>Enabled</label><label class="checkline"><input type="checkbox" name="twitter_enabled" {% if twitter and twitter.enabled %}checked{% endif %}> On</label></div>
-      <div class="span-4"><label>Users</label><input name="twitter_users" type="text" value="{{ twitter.users | join(', ') if twitter else '' }}"></div>
-      <div class="span-3"><label>Token Env</label><input name="twitter_apify_token_env" type="text" value="{{ twitter.apify_token_env if twitter else 'APIFY_TOKEN' }}"></div>
-      <div class="span-3"><label>Actor</label><input name="twitter_actor_id" type="text" value="{{ twitter.actor_id if twitter else 'altimis~scweet' }}"></div>
-      <div class="span-2"><label>Limit</label><input name="twitter_fetch_limit" type="number" value="{{ twitter.fetch_limit if twitter else 10 }}"></div>
-      <div class="span-2"><label>Replies</label><label class="checkline"><input type="checkbox" name="twitter_fetch_reply_text" {% if twitter and twitter.fetch_reply_text %}checked{% endif %}> Fetch</label></div>
-      <div class="span-2"><label>Replies/Tweet</label><input name="twitter_max_replies_per_tweet" type="number" value="{{ twitter.max_replies_per_tweet if twitter else 3 }}"></div>
-      <div class="span-3"><label>Tweets Expand</label><input name="twitter_max_tweets_to_expand" type="number" value="{{ twitter.max_tweets_to_expand if twitter else 10 }}"></div>
-      <div class="span-3"><label>Min Likes</label><input name="twitter_reply_min_likes" type="number" value="{{ twitter.reply_min_likes if twitter else 0 }}"></div>
-    </div>
-  </section>
+        <div class="source-subhead">
+          <h3>Subreddits</h3>
+          <span class="muted">{{ config.sources.reddit.subreddits | length }} configured</span>
+        </div>
+        <input type="hidden" name="reddit_subreddit_count" value="{{ config.sources.reddit.subreddits | length }}">
+        <div class="source-table-wrap">
+          <table class="source-table">
+            <thead>
+              <tr>
+                <th class="col-check">On</th>
+                <th>Subreddit</th>
+                <th>Sort</th>
+                <th>Window</th>
+                <th>Limit</th>
+                <th>Min score</th>
+                <th class="col-remove">Remove</th>
+              </tr>
+            </thead>
+            <tbody>
+              {% for source in config.sources.reddit.subreddits %}
+                {% set i = loop.index0 %}
+                {% set n = loop.index %}
+                <tr>
+                  <td><label class="sr-only" for="reddit_subreddit_{{ i }}_enabled">Subreddit {{ n }} enabled</label><input id="reddit_subreddit_{{ i }}_enabled" type="checkbox" name="reddit_subreddit_{{ i }}_enabled" {% if source.enabled %}checked{% endif %}></td>
+                  <td><label class="sr-only" for="reddit_subreddit_{{ i }}_name">Subreddit {{ n }} name</label><input id="reddit_subreddit_{{ i }}_name" name="reddit_subreddit_{{ i }}_name" class="table-input" type="text" value="{{ source.subreddit }}"></td>
+                  <td><label class="sr-only" for="reddit_subreddit_{{ i }}_sort">Subreddit {{ n }} sort</label><select id="reddit_subreddit_{{ i }}_sort" name="reddit_subreddit_{{ i }}_sort" class="table-input">{% for option in ["hot", "new", "top", "rising", "controversial"] %}<option value="{{ option }}" {% if source.sort == option %}selected{% endif %}>{{ option }}</option>{% endfor %}</select></td>
+                  <td><label class="sr-only" for="reddit_subreddit_{{ i }}_time_filter">Subreddit {{ n }} window</label><select id="reddit_subreddit_{{ i }}_time_filter" name="reddit_subreddit_{{ i }}_time_filter" class="table-input">{% for option in ["hour", "day", "week", "month", "year", "all"] %}<option value="{{ option }}" {% if source.time_filter == option %}selected{% endif %}>{{ option }}</option>{% endfor %}</select></td>
+                  <td><label class="sr-only" for="reddit_subreddit_{{ i }}_fetch_limit">Subreddit {{ n }} limit</label><input id="reddit_subreddit_{{ i }}_fetch_limit" name="reddit_subreddit_{{ i }}_fetch_limit" class="table-input compact-number" type="number" min="1" max="100" value="{{ source.fetch_limit }}"></td>
+                  <td><label class="sr-only" for="reddit_subreddit_{{ i }}_min_score">Subreddit {{ n }} min score</label><input id="reddit_subreddit_{{ i }}_min_score" name="reddit_subreddit_{{ i }}_min_score" class="table-input compact-number" type="number" min="0" value="{{ source.min_score }}"></td>
+                  <td><label class="checkline remove-line" for="reddit_subreddit_{{ i }}_remove"><input id="reddit_subreddit_{{ i }}_remove" type="checkbox" name="reddit_subreddit_{{ i }}_remove"> Remove</label></td>
+                </tr>
+              {% else %}
+                <tr class="empty-row"><td colspan="7">No subreddits configured.</td></tr>
+              {% endfor %}
+            </tbody>
+            <tfoot>
+              <tr class="add-row">
+                <td colspan="7"><label class="inline-add" for="reddit_subreddit_new_name">Add subreddit <input id="reddit_subreddit_new_name" name="reddit_subreddit_new_name" class="table-input" type="text" placeholder="LocalLLaMA"></label></td>
+              </tr>
+            </tfoot>
+          </table>
+        </div>
 
-  <p><button type="submit">Save Sources</button></p>
+        <div class="source-subhead">
+          <h3>Users</h3>
+          <span class="muted">{{ config.sources.reddit.users | length }} configured</span>
+        </div>
+        <input type="hidden" name="reddit_user_count" value="{{ config.sources.reddit.users | length }}">
+        <div class="source-table-wrap">
+          <table class="source-table">
+            <thead>
+              <tr>
+                <th class="col-check">On</th>
+                <th>Username</th>
+                <th>Sort</th>
+                <th>Limit</th>
+                <th class="col-remove">Remove</th>
+              </tr>
+            </thead>
+            <tbody>
+              {% for source in config.sources.reddit.users %}
+                {% set i = loop.index0 %}
+                {% set n = loop.index %}
+                <tr>
+                  <td><label class="sr-only" for="reddit_user_{{ i }}_enabled">Reddit user {{ n }} enabled</label><input id="reddit_user_{{ i }}_enabled" type="checkbox" name="reddit_user_{{ i }}_enabled" {% if source.enabled %}checked{% endif %}></td>
+                  <td><label class="sr-only" for="reddit_user_{{ i }}_username">Reddit user {{ n }} username</label><input id="reddit_user_{{ i }}_username" name="reddit_user_{{ i }}_username" class="table-input" type="text" value="{{ source.username }}"></td>
+                  <td><label class="sr-only" for="reddit_user_{{ i }}_sort">Reddit user {{ n }} sort</label><select id="reddit_user_{{ i }}_sort" name="reddit_user_{{ i }}_sort" class="table-input">{% for option in ["new", "hot", "top", "controversial"] %}<option value="{{ option }}" {% if source.sort == option %}selected{% endif %}>{{ option }}</option>{% endfor %}</select></td>
+                  <td><label class="sr-only" for="reddit_user_{{ i }}_fetch_limit">Reddit user {{ n }} limit</label><input id="reddit_user_{{ i }}_fetch_limit" name="reddit_user_{{ i }}_fetch_limit" class="table-input compact-number" type="number" min="1" max="100" value="{{ source.fetch_limit }}"></td>
+                  <td><label class="checkline remove-line" for="reddit_user_{{ i }}_remove"><input id="reddit_user_{{ i }}_remove" type="checkbox" name="reddit_user_{{ i }}_remove"> Remove</label></td>
+                </tr>
+              {% else %}
+                <tr class="empty-row"><td colspan="5">No Reddit users configured.</td></tr>
+              {% endfor %}
+            </tbody>
+            <tfoot>
+              <tr class="add-row">
+                <td colspan="5"><label class="inline-add" for="reddit_user_new_username">Add user <input id="reddit_user_new_username" name="reddit_user_new_username" class="table-input" type="text" placeholder="username"></label></td>
+              </tr>
+            </tfoot>
+          </table>
+        </div>
+      </section>
+
+      <section
+        id="source-panel-telegram"
+        class="source-panel"
+        role="tabpanel"
+        aria-labelledby="source-tab-telegram"
+        data-source-panel="telegram"
+        hidden
+      >
+        <div class="source-panel-header">
+          <div>
+            <h2>Telegram</h2>
+            <p class="muted">Manage public channel previews.</p>
+          </div>
+          <span class="pill">{{ source_counts.get("telegram", 0) }} enabled / {{ config.sources.telegram.channels | length }} configured</span>
+        </div>
+        <label class="checkline source-toggle" for="telegram_enabled"><input id="telegram_enabled" type="checkbox" name="telegram_enabled" {% if config.sources.telegram.enabled %}checked{% endif %}> Telegram enabled</label>
+        <input type="hidden" name="telegram_count" value="{{ config.sources.telegram.channels | length }}">
+        <div class="source-table-wrap">
+          <table class="source-table">
+            <thead>
+              <tr>
+                <th class="col-check">On</th>
+                <th>Channel</th>
+                <th>Limit</th>
+                <th class="col-remove">Remove</th>
+              </tr>
+            </thead>
+            <tbody>
+              {% for source in config.sources.telegram.channels %}
+                {% set i = loop.index0 %}
+                {% set n = loop.index %}
+                <tr>
+                  <td><label class="sr-only" for="telegram_{{ i }}_enabled">Telegram {{ n }} enabled</label><input id="telegram_{{ i }}_enabled" type="checkbox" name="telegram_{{ i }}_enabled" {% if source.enabled %}checked{% endif %}></td>
+                  <td><label class="sr-only" for="telegram_{{ i }}_channel">Telegram {{ n }} channel</label><input id="telegram_{{ i }}_channel" name="telegram_{{ i }}_channel" class="table-input" type="text" value="{{ source.channel }}"></td>
+                  <td><label class="sr-only" for="telegram_{{ i }}_fetch_limit">Telegram {{ n }} limit</label><input id="telegram_{{ i }}_fetch_limit" name="telegram_{{ i }}_fetch_limit" class="table-input compact-number" type="number" min="1" max="100" value="{{ source.fetch_limit }}"></td>
+                  <td><label class="checkline remove-line" for="telegram_{{ i }}_remove"><input id="telegram_{{ i }}_remove" type="checkbox" name="telegram_{{ i }}_remove"> Remove</label></td>
+                </tr>
+              {% else %}
+                <tr class="empty-row"><td colspan="4">No Telegram channels configured.</td></tr>
+              {% endfor %}
+            </tbody>
+            <tfoot>
+              <tr class="add-row">
+                <td colspan="4"><label class="inline-add" for="telegram_new_channel">Add channel <input id="telegram_new_channel" name="telegram_new_channel" class="table-input" type="text" placeholder="channel"></label></td>
+              </tr>
+            </tfoot>
+          </table>
+        </div>
+      </section>
+
+      <section
+        id="source-panel-twitter"
+        class="source-panel"
+        role="tabpanel"
+        aria-labelledby="source-tab-twitter"
+        data-source-panel="twitter"
+        hidden
+      >
+        {% set twitter = config.sources.twitter %}
+        <div class="source-panel-header">
+          <div>
+            <h2>Twitter</h2>
+            <p class="muted">Configure Apify-backed Twitter collection.</p>
+          </div>
+          <span class="pill">{{ source_counts.get("twitter", 0) }} users</span>
+        </div>
+        <div class="compact-settings-grid">
+          <label class="checkline" for="twitter_enabled"><input id="twitter_enabled" type="checkbox" name="twitter_enabled" {% if twitter and twitter.enabled %}checked{% endif %}> Enabled</label>
+          <label for="twitter_users">Twitter users<input id="twitter_users" name="twitter_users" type="text" value="{{ twitter.users | join(', ') if twitter else '' }}" placeholder="user1, user2"></label>
+          <label for="twitter_apify_token_env">Token env<input id="twitter_apify_token_env" name="twitter_apify_token_env" type="text" value="{{ twitter.apify_token_env if twitter else 'APIFY_TOKEN' }}"></label>
+          <label for="twitter_actor_id">Actor<input id="twitter_actor_id" name="twitter_actor_id" type="text" value="{{ twitter.actor_id if twitter else 'altimis~scweet' }}"></label>
+          <label for="twitter_fetch_limit">Limit<input id="twitter_fetch_limit" name="twitter_fetch_limit" type="number" min="1" max="500" value="{{ twitter.fetch_limit if twitter else 10 }}"></label>
+          <label class="checkline" for="twitter_fetch_reply_text"><input id="twitter_fetch_reply_text" type="checkbox" name="twitter_fetch_reply_text" {% if twitter and twitter.fetch_reply_text %}checked{% endif %}> Fetch replies</label>
+          <label for="twitter_max_replies_per_tweet">Replies per tweet<input id="twitter_max_replies_per_tweet" name="twitter_max_replies_per_tweet" type="number" min="0" max="50" value="{{ twitter.max_replies_per_tweet if twitter else 3 }}"></label>
+          <label for="twitter_max_tweets_to_expand">Tweets to expand<input id="twitter_max_tweets_to_expand" name="twitter_max_tweets_to_expand" type="number" min="0" max="100" value="{{ twitter.max_tweets_to_expand if twitter else 10 }}"></label>
+          <label for="twitter_reply_min_likes">Reply min likes<input id="twitter_reply_min_likes" name="twitter_reply_min_likes" type="number" min="0" value="{{ twitter.reply_min_likes if twitter else 0 }}"></label>
+        </div>
+      </section>
+    </div>
+  </div>
+
+  <div class="form-actions">
+    <button type="submit" data-testid="save-sources">Save Sources</button>
+    <a class="button secondary" href="/settings/basic">Basic Settings</a>
+  </div>
 </form>
+
+<script>
+  (() => {
+    const manager = document.querySelector("[data-source-manager]");
+    if (!manager) return;
+    const tabs = Array.from(manager.querySelectorAll("[data-source-tab]"));
+    const panels = Array.from(manager.querySelectorAll("[data-source-panel]"));
+
+    function activate(key) {
+      tabs.forEach((tab) => {
+        const active = tab.dataset.sourceTab === key;
+        tab.classList.toggle("active", active);
+        tab.setAttribute("aria-selected", active ? "true" : "false");
+      });
+      panels.forEach((panel) => {
+        const active = panel.dataset.sourcePanel === key;
+        panel.hidden = !active;
+        panel.classList.toggle("active", active);
+      });
+      if (window.location.hash !== "#" + key) {
+        history.replaceState(null, "", "#" + key);
+      }
+    }
+
+    const initial = (window.location.hash || "").replace("#", "") || manager.dataset.defaultSource || "rss";
+    activate(tabs.some((tab) => tab.dataset.sourceTab === initial) ? initial : "rss");
+    tabs.forEach((tab) => tab.addEventListener("click", () => activate(tab.dataset.sourceTab)));
+    window.addEventListener("hashchange", () => {
+      const key = (window.location.hash || "").replace("#", "");
+      if (tabs.some((tab) => tab.dataset.sourceTab === key)) activate(key);
+    });
+  })();
+</script>
 {% endif %}
 {% endblock %}

@@ -5,7 +5,7 @@ import json
 import re
 from typing import List, Optional
 from pydantic import ValidationError
-from tenacity import retry, stop_after_attempt, wait_exponential
+from tenacity import RetryError, retry, stop_after_attempt, wait_exponential
 from rich.progress import Progress, SpinnerColumn, BarColumn, TextColumn, MofNCompleteColumn
 
 from .client import AIClient
@@ -21,6 +21,7 @@ from ..models import AIProvider, ContentItem
 
 DEFAULT_THROTTLE_SEC = 0.0
 CODEX_BATCH_CHAR_BUDGET = 50000
+CODEX_BATCH_MAX_ITEMS = 10
 
 
 class ContentAnalyzer:
@@ -54,7 +55,7 @@ class ContentAnalyzer:
 
     async def analyze_batch(self, items: List[ContentItem]) -> List[ContentItem]:
         if self._should_use_batch_analysis(items):
-            return await self._analyze_batch_with_codex(items)
+            return await self._analyze_batch_items(items)
 
         self._verbose_event("llm.analysis.mode", mode="per_item", items=len(items), **self._client_meta())
         throttle_sec = self._get_throttle_sec()
@@ -78,12 +79,13 @@ class ContentAnalyzer:
                     self._verbose_event("llm.analysis.item", index=index + 1, total=len(items), status="completed")
                     analyzed_items.append(item)
                 except Exception as e:
+                    error_label = self._exception_label(e)
                     self._verbose_event(
                         "llm.analysis.item",
                         index=index + 1,
                         total=len(items),
                         status="failed",
-                        error=type(e).__name__,
+                        error=error_label,
                     )
                     print(f"Error analyzing item {item.id}: {e}")
                     item.ai_score = 0.0
@@ -104,13 +106,14 @@ class ContentAnalyzer:
             and (provider == AIProvider.CODEX_CLI or str(provider) == AIProvider.CODEX_CLI.value)
         )
 
-    async def _analyze_batch_with_codex(self, items: List[ContentItem]) -> List[ContentItem]:
+    async def _analyze_batch_items(self, items: List[ContentItem]) -> List[ContentItem]:
         analyzed_items: List[ContentItem] = []
-        chunks = list(self._chunk_items_for_codex(items))
+        chunks = list(self._chunk_items_for_batch_analysis(items))
         throttle_sec = self._get_throttle_sec()
+        batch_label = self._batch_analysis_label()
         self._verbose_event(
             "llm.analysis.mode",
-            mode="codex_batch",
+            mode=batch_label["mode"],
             batches=len(chunks),
             items=len(items),
             **self._client_meta(),
@@ -124,14 +127,14 @@ class ContentAnalyzer:
             console=self._progress_console(),
             transient=True,
         ) as progress:
-            task = progress.add_task("Analyzing Codex batches", total=len(chunks))
+            task = progress.add_task(f"Analyzing {batch_label['name']} batches", total=len(chunks))
             completed_items = 0
 
             for index, chunk in enumerate(chunks):
                 progress.update(
                     task,
                     description=(
-                        f"Analyzing Codex batch {index + 1}/{len(chunks)} "
+                        f"Analyzing {batch_label['name']} batch {index + 1}/{len(chunks)} "
                         f"({completed_items}/{len(items)} items done, {len(chunk)} in call)"
                     ),
                     refresh=True,
@@ -153,19 +156,20 @@ class ContentAnalyzer:
                         status="completed",
                     )
                 except Exception as e:
+                    error_label = self._exception_label(e)
                     self._verbose_event(
                         "llm.analysis.fallback",
                         chunk_items=len(chunk),
-                        error=type(e).__name__,
+                        error=error_label,
                     )
-                    print(f"Error analyzing Codex batch of {len(chunk)} items: {e}")
+                    print(f"Error analyzing {batch_label['name']} batch of {len(chunk)} items: {e}")
                     await self._analyze_chunk_individually(chunk)
                 analyzed_items.extend(chunk)
                 completed_items += len(chunk)
                 progress.update(
                     task,
                     advance=1,
-                    description=f"Analyzed {completed_items}/{len(items)} items via Codex batches",
+                    description=f"Analyzed {completed_items}/{len(items)} items via {batch_label['name']} batches",
                     refresh=True,
                 )
                 if throttle_sec > 0 and index < len(chunks) - 1:
@@ -174,13 +178,31 @@ class ContentAnalyzer:
         return analyzed_items
 
     def _chunk_items_for_codex(self, items: List[ContentItem]) -> List[List[ContentItem]]:
+        return self._chunk_items_for_batch_analysis(
+            items,
+            max_items=CODEX_BATCH_MAX_ITEMS,
+            char_budget=CODEX_BATCH_CHAR_BUDGET,
+        )
+
+    def _chunk_items_for_batch_analysis(
+        self,
+        items: List[ContentItem],
+        max_items: int | None = None,
+        char_budget: int | None = None,
+    ) -> List[List[ContentItem]]:
+        if max_items is None or char_budget is None:
+            max_items, char_budget = self._batch_limits()
+
         chunks: List[List[ContentItem]] = []
         current: List[ContentItem] = []
         current_size = 0
 
         for item in items:
             item_size = len(json.dumps(self._item_payload(item), ensure_ascii=False))
-            if current and current_size + item_size > CODEX_BATCH_CHAR_BUDGET:
+            if current and (
+                len(current) >= max_items
+                or current_size + item_size > char_budget
+            ):
                 chunks.append(current)
                 current = []
                 current_size = 0
@@ -191,13 +213,19 @@ class ContentAnalyzer:
             chunks.append(current)
         return chunks
 
+    def _batch_limits(self) -> tuple[int, int]:
+        return CODEX_BATCH_MAX_ITEMS, CODEX_BATCH_CHAR_BUDGET
+
+    def _batch_analysis_label(self) -> dict[str, str]:
+        return {"mode": "codex_batch", "name": "Codex"}
+
     async def _analyze_chunk_individually(self, items: List[ContentItem]) -> None:
         self._verbose_event("llm.analysis.individual_fallback", items=len(items))
         for item in items:
             try:
                 await self._analyze_item(item)
             except Exception as e:
-                print(f"Error analyzing item {item.id}: {e}")
+                print(f"Error analyzing item {item.id}: {self._exception_label(e)}")
                 self._apply_analysis_failure(item, "Analysis failed")
 
     @retry(
@@ -451,3 +479,14 @@ class ContentAnalyzer:
             "provider": provider_value,
             "model": getattr(config, "model", "unknown"),
         }
+
+    @staticmethod
+    def _exception_label(exc: Exception) -> str:
+        if isinstance(exc, RetryError):
+            try:
+                last_exc = exc.last_attempt.exception()
+            except Exception:
+                last_exc = None
+            if last_exc is not None:
+                return f"{type(last_exc).__name__}: {last_exc}"
+        return f"{type(exc).__name__}: {exc}" if str(exc) else type(exc).__name__

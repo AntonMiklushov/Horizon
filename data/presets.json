@@ -253,9 +253,9 @@
       "sources": [
         {
           "type": "reddit_subreddit",
-          "description": "Science news and discussions",
+          "description": "Science Reddit - discovery-only discussions, not a fact source",
           "description_zh": "科学新闻与讨论",
-          "tags": ["science", "general"],
+          "tags": ["science", "general", "discovery-only", "social"],
           "config": { "subreddit": "science", "sort": "hot", "fetch_limit": 15, "min_score": 200 }
         },
         {
@@ -271,6 +271,286 @@
           "description_zh": "Quanta Magazine — 通俗科学报道",
           "tags": ["science", "journalism"],
           "config": { "name": "Quanta Magazine", "url": "https://api.quantamagazine.org/feed/", "category": "science" }
+        },
+        {
+          "type": "rss",
+          "description": "Science/AAAS - latest science news",
+          "description_zh": "Science/AAAS - latest science news",
+          "tags": ["science", "journal", "news"],
+          "config": { "name": "Science/AAAS", "url": "https://www.science.org/rss/news_current.xml", "category": "science" }
+        },
+        {
+          "type": "rss",
+          "description": "PNAS - journal table of contents",
+          "description_zh": "PNAS - journal table of contents",
+          "tags": ["research", "journal"],
+          "config": { "name": "PNAS", "url": "https://www.pnas.org/action/showFeed?type=etoc&feed=rss&jc=pnas", "category": "science" }
+        },
+        {
+          "type": "rss",
+          "description": "Cell Press - Cell current issue",
+          "description_zh": "Cell Press - Cell current issue",
+          "tags": ["research", "journal", "biology"],
+          "config": { "name": "Cell Press", "url": "https://www.cell.com/cell/current.rss", "category": "science" }
+        },
+        {
+          "type": "rss",
+          "description": "PLOS Biology - open-access biology research",
+          "description_zh": "PLOS Biology - open-access biology research",
+          "tags": ["research", "journal", "biology", "open-access"],
+          "config": { "name": "PLOS Biology", "url": "https://journals.plos.org/plosbiology/feed/atom", "category": "science" }
+        },
+        {
+          "type": "rss",
+          "description": "eLife - recent research articles",
+          "description_zh": "eLife - recent research articles",
+          "tags": ["research", "journal", "biology"],
+          "config": { "name": "eLife", "url": "https://elifesciences.org/rss/recent.xml", "category": "science" }
+        },
+        {
+          "type": "rss",
+          "description": "Science News - science journalism",
+          "description_zh": "Science News - science journalism",
+          "tags": ["science", "journalism"],
+          "config": { "name": "Science News", "url": "https://www.sciencenews.org/feed", "category": "science" }
+        },
+        {
+          "type": "rss",
+          "description": "Scientific American - science news and analysis",
+          "description_zh": "Scientific American - science news and analysis",
+          "tags": ["science", "journalism", "analysis"],
+          "config": { "name": "Scientific American", "url": "https://rss.sciam.com/ScientificAmerican-Global", "category": "science" }
+        },
+        {
+          "type": "rss",
+          "description": "The Conversation Science - expert context and explainers",
+          "description_zh": "The Conversation Science - expert context and explainers",
+          "tags": ["science", "context", "analysis"],
+          "config": { "name": "The Conversation Science", "url": "https://theconversation.com/us/topics/science-technology-11/articles.atom", "category": "science" }
+        },
+        {
+          "type": "rss",
+          "description": "Ars Technica Science - science reporting",
+          "description_zh": "Ars Technica Science - science reporting",
+          "tags": ["science", "journalism"],
+          "config": { "name": "Ars Technica Science", "url": "https://arstechnica.com/science/feed/", "category": "science" }
+        },
+        {
+          "type": "rss",
+          "description": "Knowable Magazine - review-style science context",
+          "description_zh": "Knowable Magazine - review-style science context",
+          "tags": ["science", "context", "journalism"],
+          "config": { "name": "Knowable Magazine", "url": "https://knowablemagazine.org/rss", "category": "science" }
+        },
+        {
+          "type": "rss",
+          "description": "NASA news releases - official primary science and space source",
+          "description_zh": "NASA news releases - official primary science and space source",
+          "tags": ["science", "space", "official", "institution"],
+          "config": { "name": "NASA News Releases", "url": "https://www.nasa.gov/news-release/feed/", "category": "science" }
+        },
+        {
+          "type": "rss",
+          "description": "NASA Science - official science feed",
+          "description_zh": "NASA Science - official science feed",
+          "tags": ["science", "space", "official", "institution"],
+          "config": { "name": "NASA Science", "url": "https://science.nasa.gov/feed/", "category": "science" }
+        },
+        {
+          "type": "rss",
+          "description": "NASA Earth - official Earth science feed",
+          "description_zh": "NASA Earth - official Earth science feed",
+          "tags": ["science", "earth", "space", "official", "institution"],
+          "config": { "name": "NASA Earth", "url": "https://science.nasa.gov/earth/feed/", "category": "science" }
+        },
+        {
+          "type": "rss",
+          "description": "NASA Universe - official astrophysics feed",
+          "description_zh": "NASA Universe - official astrophysics feed",
+          "tags": ["science", "space", "astronomy", "official", "institution"],
+          "config": { "name": "NASA Universe", "url": "https://science.nasa.gov/universe/feed/", "category": "science" }
+        },
+        {
+          "type": "rss",
+          "description": "NASA Solar System - official planetary science feed",
+          "description_zh": "NASA Solar System - official planetary science feed",
+          "tags": ["science", "space", "planetary", "official", "institution"],
+          "config": { "name": "NASA Solar System", "url": "https://science.nasa.gov/solar-system/feed/", "category": "science" }
+        },
+        {
+          "type": "rss",
+          "description": "ESA Space News - official agency feed",
+          "description_zh": "ESA Space News - official agency feed",
+          "tags": ["science", "space", "official", "institution"],
+          "config": { "name": "ESA Space News", "url": "https://www.esa.int/rssfeed/Our_Activities/Space_News", "category": "science" }
+        },
+        {
+          "type": "rss",
+          "description": "ESA Observing the Earth - official Earth observation feed",
+          "description_zh": "ESA Observing the Earth - official Earth observation feed",
+          "tags": ["science", "earth", "space", "official", "institution"],
+          "config": { "name": "ESA Observing the Earth", "url": "https://www.esa.int/rssfeed/Our_Activities/Observing_the_Earth", "category": "science" }
+        },
+        {
+          "type": "rss",
+          "description": "ESA Space Science - official science feed",
+          "description_zh": "ESA Space Science - official science feed",
+          "tags": ["science", "space", "official", "institution"],
+          "config": { "name": "ESA Space Science", "url": "https://www.esa.int/rssfeed/Science_Exploration/Space_Science", "category": "science" }
+        },
+        {
+          "type": "rss",
+          "description": "CERN news - official particle physics source",
+          "description_zh": "CERN news - official particle physics source",
+          "tags": ["science", "physics", "official", "institution"],
+          "config": { "name": "CERN News", "url": "https://home.cern/api/news/news/feed.rss", "category": "science" }
+        },
+        {
+          "type": "rss",
+          "description": "CERN press releases - official particle physics announcements",
+          "description_zh": "CERN press releases - official particle physics announcements",
+          "tags": ["science", "physics", "official", "institution"],
+          "config": { "name": "CERN Press Releases", "url": "https://home.cern/api/news/press-release/feed.rss", "category": "science" }
+        },
+        {
+          "type": "rss",
+          "description": "NSF news - official US science funding agency source",
+          "description_zh": "NSF news - official US science funding agency source",
+          "tags": ["science", "official", "institution"],
+          "config": { "name": "NSF News", "url": "https://www.nsf.gov/rss/rss_www_news.xml", "category": "science" }
+        },
+        {
+          "type": "rss",
+          "description": "NIH news releases - official biomedical research source",
+          "description_zh": "NIH news releases - official biomedical research source",
+          "tags": ["science", "health", "biomedicine", "official", "institution"],
+          "config": { "name": "NIH News Releases", "url": "https://www.nih.gov/news-releases/feed.xml", "category": "science" }
+        },
+        {
+          "type": "rss",
+          "description": "NOAA Ocean Service news - official ocean and climate source",
+          "description_zh": "NOAA Ocean Service news - official ocean and climate source",
+          "tags": ["science", "climate", "ocean", "official", "institution"],
+          "config": { "name": "NOAA Ocean Service News", "url": "https://oceanservice.noaa.gov/news/rss.xml", "category": "science" }
+        },
+        {
+          "type": "rss",
+          "description": "CDC media releases - official public health source",
+          "description_zh": "CDC media releases - official public health source",
+          "tags": ["science", "health", "public-health", "official", "institution"],
+          "config": { "name": "CDC Media Releases", "url": "https://www.cdc.gov/media/rss.xml", "category": "science" }
+        },
+        {
+          "type": "rss",
+          "description": "WHO Disease Outbreak News - official public health source",
+          "description_zh": "WHO Disease Outbreak News - official public health source",
+          "tags": ["science", "health", "public-health", "official", "institution"],
+          "config": { "name": "WHO Disease Outbreak News", "url": "https://www.who.int/feeds/entity/csr/don/en/rss.xml", "category": "science" }
+        },
+        {
+          "type": "rss",
+          "description": "arXiv physics - preprint early signal, not peer-reviewed",
+          "description_zh": "arXiv physics - preprint early signal, not peer-reviewed",
+          "tags": ["science", "preprint", "physics"],
+          "config": { "name": "arXiv Physics", "url": "https://rss.arxiv.org/rss/physics", "category": "science_preprint" }
+        },
+        {
+          "type": "rss",
+          "description": "arXiv astrophysics - preprint early signal, not peer-reviewed",
+          "description_zh": "arXiv astrophysics - preprint early signal, not peer-reviewed",
+          "tags": ["science", "preprint", "astronomy"],
+          "config": { "name": "arXiv Astrophysics", "url": "https://rss.arxiv.org/rss/astro-ph", "category": "science_preprint" }
+        },
+        {
+          "type": "rss",
+          "description": "arXiv mathematics - preprint early signal, not peer-reviewed",
+          "description_zh": "arXiv mathematics - preprint early signal, not peer-reviewed",
+          "tags": ["science", "preprint", "math"],
+          "config": { "name": "arXiv Mathematics", "url": "https://rss.arxiv.org/rss/math", "category": "science_preprint" }
+        },
+        {
+          "type": "rss",
+          "description": "bioRxiv - biology preprints, not peer-reviewed",
+          "description_zh": "bioRxiv - biology preprints, not peer-reviewed",
+          "tags": ["science", "preprint", "biology"],
+          "config": { "name": "bioRxiv", "url": "https://connect.biorxiv.org/biorxiv_xml.php?subject=all", "category": "science_preprint" }
+        },
+        {
+          "type": "rss",
+          "description": "medRxiv - medical preprints, not peer-reviewed",
+          "description_zh": "medRxiv - medical preprints, not peer-reviewed",
+          "tags": ["science", "preprint", "medicine"],
+          "config": { "name": "medRxiv", "url": "https://connect.medrxiv.org/medrxiv_xml.php?subject=all", "category": "science_preprint" }
+        },
+        {
+          "type": "rss",
+          "description": "ChemRxiv - chemistry preprints, not peer-reviewed",
+          "description_zh": "ChemRxiv - chemistry preprints, not peer-reviewed",
+          "tags": ["science", "preprint", "chemistry"],
+          "config": { "name": "ChemRxiv", "url": "https://chemrxiv.org/engage/chemrxiv/public-dashboard.rss", "category": "science_preprint" }
+        },
+        {
+          "type": "rss",
+          "description": "EurekAlert - AAAS press-release platform, source-finder only",
+          "description_zh": "EurekAlert - AAAS press-release platform, source-finder only",
+          "tags": ["science", "press-release", "source-finder", "discovery-only"],
+          "config": { "name": "EurekAlert", "url": "https://www.eurekalert.org/rss.xml", "category": "science_discovery" }
+        },
+        {
+          "type": "telegram",
+          "description": "N + 1 Telegram - RU science discovery-only signal",
+          "description_zh": "N + 1 Telegram - RU science discovery-only signal",
+          "tags": ["science", "russian", "telegram", "discovery-only"],
+          "config": { "channel": "nplusone", "fetch_limit": 10 }
+        },
+        {
+          "type": "telegram",
+          "description": "PostNauka Telegram - RU science context discovery-only signal",
+          "description_zh": "PostNauka Telegram - RU science context discovery-only signal",
+          "tags": ["science", "russian", "telegram", "context", "discovery-only"],
+          "config": { "channel": "postnauka", "fetch_limit": 10 }
+        },
+        {
+          "type": "telegram",
+          "description": "Biomolecula Telegram - biology and medicine discovery-only signal",
+          "description_zh": "Biomolecula Telegram - biology and medicine discovery-only signal",
+          "tags": ["science", "biology", "medicine", "russian", "telegram", "discovery-only"],
+          "config": { "channel": "biomolecula", "fetch_limit": 10 }
+        },
+        {
+          "type": "telegram",
+          "description": "Troitsky Variant Telegram - science and science policy discovery-only signal",
+          "description_zh": "Troitsky Variant Telegram - science and science policy discovery-only signal",
+          "tags": ["science", "policy", "russian", "telegram", "discovery-only"],
+          "config": { "channel": "trvscience", "fetch_limit": 10 }
+        },
+        {
+          "type": "telegram",
+          "description": "Science and Life Telegram - popular science discovery-only signal",
+          "description_zh": "Science and Life Telegram - popular science discovery-only signal",
+          "tags": ["science", "popular-science", "russian", "telegram", "discovery-only"],
+          "config": { "channel": "scienceandlife", "fetch_limit": 10 }
+        },
+        {
+          "type": "telegram",
+          "description": "Naked Science Telegram - broad RU science discovery-only signal",
+          "description_zh": "Naked Science Telegram - broad RU science discovery-only signal",
+          "tags": ["science", "popular-science", "russian", "telegram", "discovery-only"],
+          "config": { "channel": "nsmag", "fetch_limit": 10 }
+        },
+        {
+          "type": "telegram",
+          "description": "Nauka TV Telegram - popular science context discovery-only signal",
+          "description_zh": "Nauka TV Telegram - popular science context discovery-only signal",
+          "tags": ["science", "popular-science", "russian", "telegram", "context", "discovery-only"],
+          "config": { "channel": "naukatv_ru", "fetch_limit": 10 }
+        },
+        {
+          "type": "telegram",
+          "description": "Indicator.Ru Telegram - low-limit test discovery-only signal",
+          "description_zh": "Indicator.Ru Telegram - low-limit test discovery-only signal",
+          "tags": ["science", "russian", "telegram", "discovery-only", "low-limit"],
+          "config": { "channel": "indicator_news", "fetch_limit": 5 }
         }
       ]
     },

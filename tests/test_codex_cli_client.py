@@ -3,6 +3,7 @@
 from __future__ import annotations
 
 import subprocess
+import asyncio
 from pathlib import Path
 from types import SimpleNamespace
 
@@ -202,3 +203,48 @@ def test_existing_openai_provider_still_uses_openai_client(monkeypatch):
     )
 
     assert isinstance(client, OpenAIClient)
+
+
+def test_openai_compatible_local_provider_does_not_require_api_key_env(monkeypatch):
+    monkeypatch.delenv("OPENAI_API_KEY", raising=False)
+
+    client = create_ai_client(
+        AIConfig(
+            provider=AIProvider.OPENAI,
+            model="local-model",
+            base_url="http://127.0.0.1:1234/v1",
+            api_key_env=None,
+        )
+    )
+
+    assert isinstance(client, OpenAIClient)
+    assert client.model == "local-model"
+
+
+def test_openai_compatible_local_provider_uses_text_response_format(monkeypatch):
+    class FakeCompletions:
+        async def create(self, **kwargs):  # type: ignore[no-untyped-def]
+            calls.append(kwargs)
+            return SimpleNamespace(
+                usage=None,
+                choices=[SimpleNamespace(message=SimpleNamespace(content='{"ok": true}'))],
+            )
+
+    calls = []
+    monkeypatch.setattr(
+        "src.ai.client.AsyncOpenAI",
+        lambda **kwargs: SimpleNamespace(chat=SimpleNamespace(completions=FakeCompletions())),
+    )
+    client = OpenAIClient(
+        AIConfig(
+            provider=AIProvider.OPENAI,
+            model="local-model",
+            base_url="http://127.0.0.1:1234/v1",
+            api_key_env=None,
+        )
+    )
+
+    result = asyncio.run(client.complete("system", "user", max_tokens=32))
+
+    assert result == '{"ok": true}'
+    assert calls[0]["response_format"] == {"type": "text"}

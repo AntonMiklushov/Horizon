@@ -32,6 +32,7 @@ ENV/
 # IDE
 .vscode/
 .idea/
+*.lnk
 *.swp
 *.swo
 *~
@@ -70,6 +71,7 @@ horizon-qa/
 .horizon-codex-*/
 .codex-tmp*/
 pytest-basetemp*/
+pytest-cache-files-*/
 
 # todo
 todo.txt

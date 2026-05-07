@@ -19,6 +19,7 @@ STAGES = {
     "filtered": "filtered_items.json",
     "enriched": "enriched_items.json",
 }
+TRACE_FILE = "trace.jsonl"
 SLUG_RE = re.compile(r"^[A-Za-z0-9][A-Za-z0-9_.-]{0,127}$")
 
 
@@ -85,6 +86,37 @@ class RunStore:
 
     def load_meta(self, run_id: str) -> dict[str, Any]:
         return self.read_json(run_id, "meta.json")
+
+    def append_trace_event(self, run_id: str, event: dict[str, Any]) -> Path:
+        """Append one observable activity event to the run trace."""
+
+        path = self.run_dir(run_id) / TRACE_FILE
+        self._assert_under_root(path)
+        line = json.dumps(event, ensure_ascii=False, separators=(",", ":")) + "\n"
+        with path.open("a", encoding="utf-8") as handle:
+            handle.write(line)
+        return path
+
+    def load_trace_events(self, run_id: str, limit: int = 200) -> list[dict[str, Any]]:
+        """Load recent run trace events, ignoring malformed partial JSONL lines."""
+
+        if limit <= 0:
+            return []
+
+        path = self.run_dir(run_id) / TRACE_FILE
+        self._assert_under_root(path)
+        if not path.exists():
+            return []
+
+        events: list[dict[str, Any]] = []
+        for line in path.read_text(encoding="utf-8").splitlines():
+            try:
+                event = json.loads(line)
+            except json.JSONDecodeError:
+                continue
+            if isinstance(event, dict):
+                events.append(event)
+        return events[-limit:]
 
     def list_runs(self, limit: int = 20) -> list[dict[str, Any]]:
         """List runs sorted by create/update time descending."""

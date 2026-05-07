@@ -1,5 +1,124 @@
 {% extends "base.html" %}
 {% block title %}Basic Settings{% endblock %}
+{% block head %}
+<style>
+  .provider-field[hidden] { display: none !important; }
+  .field-hint {
+    margin: 4px 0 0;
+    color: var(--muted);
+    font-size: 12px;
+    overflow-wrap: anywhere;
+  }
+</style>
+<script>
+  const providerMeta = {
+    codex_cli: { apiKey: false, baseUrl: false, codexThinking: true },
+    lm_studio: { apiKey: false, baseUrl: true, codexThinking: false },
+    openai: { apiKey: true, baseUrl: true, codexThinking: false },
+    anthropic: { apiKey: true, baseUrl: true, codexThinking: false },
+    gemini: { apiKey: true, baseUrl: false, codexThinking: false },
+    ali: { apiKey: true, baseUrl: true, codexThinking: false },
+    doubao: { apiKey: true, baseUrl: true, codexThinking: false },
+    minimax: { apiKey: true, baseUrl: true, codexThinking: false },
+  };
+  const apiKeyDefaults = {
+    openai: "OPENAI_API_KEY",
+    anthropic: "ANTHROPIC_API_KEY",
+    gemini: "GOOGLE_API_KEY",
+    ali: "DASHSCOPE_API_KEY",
+    doubao: "DOUBAO_API_KEY",
+    minimax: "MINIMAX_API_KEY",
+  };
+  const baseUrlDefaults = {
+    lm_studio: "http://127.0.0.1:1234/v1",
+    ali: "https://dashscope.aliyuncs.com/compatible-mode/v1",
+    doubao: "https://ark.cn-beijing.volces.com/api/v3",
+    minimax: "https://api.minimax.io/v1",
+  };
+  const baseUrlPlaceholders = {
+    lm_studio: "http://127.0.0.1:1234/v1",
+    openai: "Default OpenAI endpoint or compatible /v1 URL",
+    anthropic: "Default Anthropic endpoint or proxy URL",
+    ali: "https://dashscope.aliyuncs.com/compatible-mode/v1",
+    doubao: "https://ark.cn-beijing.volces.com/api/v3",
+    minimax: "https://api.minimax.io/v1",
+  };
+  const baseUrlHints = {
+    lm_studio: "Local OpenAI-compatible endpoint. API key is not used.",
+    openai: "Leave empty for the default OpenAI endpoint.",
+    anthropic: "Leave empty for the default Anthropic endpoint.",
+    ali: "Leave empty to use DashScope compatible-mode.",
+    doubao: "Doubao uses the Ark OpenAI-compatible endpoint.",
+    minimax: "Leave empty to use the MiniMax OpenAI-compatible endpoint.",
+  };
+
+  function valueIsEmptyOrKnownDefault(input, knownDefaults) {
+    const value = input.value.trim();
+    return value === "" || knownDefaults.includes(value);
+  }
+
+  function setProviderFieldVisible(field, visible) {
+    const container = document.querySelector(`[data-provider-field="${field}"]`);
+    if (!container) {
+      return;
+    }
+    container.hidden = !visible;
+    container.querySelectorAll("input, select, textarea").forEach((input) => {
+      input.disabled = !visible;
+    });
+  }
+
+  function updateProviderSettings() {
+    const provider = document.querySelector("[data-provider-mode-select]");
+    const apiKeyInput = document.querySelector("#ai_api_key_env");
+    const baseUrlInput = document.querySelector("#ai_base_url");
+    const baseUrlHint = document.querySelector("[data-base-url-hint]");
+    if (!provider || !apiKeyInput || !baseUrlInput) {
+      return;
+    }
+
+    const mode = provider.value;
+    const meta = providerMeta[mode] || providerMeta.openai;
+    setProviderFieldVisible("api-key", meta.apiKey);
+    setProviderFieldVisible("base-url", meta.baseUrl);
+    setProviderFieldVisible("codex-thinking", meta.codexThinking);
+
+    const knownApiKeys = Object.values(apiKeyDefaults);
+    if (meta.apiKey) {
+      if (valueIsEmptyOrKnownDefault(apiKeyInput, knownApiKeys)) {
+        apiKeyInput.value = apiKeyDefaults[mode] || "";
+      }
+      apiKeyInput.required = true;
+    } else {
+      apiKeyInput.value = "";
+      apiKeyInput.required = false;
+    }
+
+    const knownBaseUrls = Object.values(baseUrlDefaults);
+    if (meta.baseUrl) {
+      if (valueIsEmptyOrKnownDefault(baseUrlInput, knownBaseUrls)) {
+        baseUrlInput.value = baseUrlDefaults[mode] || "";
+      }
+      baseUrlInput.placeholder = baseUrlPlaceholders[mode] || "";
+    } else {
+      baseUrlInput.value = "";
+      baseUrlInput.placeholder = "";
+    }
+    baseUrlInput.required = false;
+    if (baseUrlHint) {
+      baseUrlHint.textContent = baseUrlHints[mode] || "";
+    }
+  }
+
+  window.addEventListener("DOMContentLoaded", () => {
+    updateProviderSettings();
+    const provider = document.querySelector("[data-provider-mode-select]");
+    if (provider) {
+      provider.addEventListener("change", updateProviderSettings);
+    }
+  });
+</script>
+{% endblock %}
 {% block content %}
 <h1>Basic Settings</h1>
 {% if saved %}<div class="notice saved">Settings saved.</div>{% endif %}
@@ -7,7 +126,49 @@
 {% if config_error %}<div class="notice error">{{ config_error }}</div>{% endif %}
 
 {% if config %}
-<form method="post" class="panel">
+<form method="post" class="panel" data-testid="basic-settings-form">
+  {% set is_lm_studio = config.ai.provider.value == "openai" and config.ai.base_url and ("127.0.0.1" in config.ai.base_url or "localhost" in config.ai.base_url) %}
+  {% set provider_mode = "lm_studio" if is_lm_studio else config.ai.provider.value %}
+  {% set codex_args = config.ai.codex_extra_args | join(" ") %}
+  <h2>LLM Provider</h2>
+  <div class="row">
+    <div class="span-3">
+      <label for="llm_provider_mode">Provider</label>
+      <select id="llm_provider_mode" name="llm_provider_mode" data-provider-mode-select data-testid="llm-provider-mode">
+        <option value="codex_cli" {% if provider_mode == "codex_cli" %}selected{% endif %}>Codex CLI</option>
+        <option value="lm_studio" {% if provider_mode == "lm_studio" %}selected{% endif %}>LM Studio</option>
+        <option value="openai" {% if provider_mode == "openai" %}selected{% endif %}>OpenAI</option>
+        <option value="anthropic" {% if provider_mode == "anthropic" %}selected{% endif %}>Anthropic</option>
+        <option value="gemini" {% if provider_mode == "gemini" %}selected{% endif %}>Gemini</option>
+        <option value="ali" {% if provider_mode == "ali" %}selected{% endif %}>Ali DashScope</option>
+        <option value="doubao" {% if provider_mode == "doubao" %}selected{% endif %}>Doubao</option>
+        <option value="minimax" {% if provider_mode == "minimax" %}selected{% endif %}>MiniMax</option>
+      </select>
+    </div>
+    <div class="span-3">
+      <label for="ai_model">Model</label>
+      <input id="ai_model" name="ai_model" type="text" value="{{ config.ai.model }}">
+    </div>
+    <div class="span-4 provider-field" data-provider-field="base-url">
+      <label for="ai_base_url">Base URL</label>
+      <input id="ai_base_url" name="ai_base_url" type="url" placeholder="http://127.0.0.1:1234/v1" value="{{ config.ai.base_url or '' }}">
+      <p class="field-hint" data-base-url-hint></p>
+    </div>
+    <div class="span-2 provider-field" data-provider-field="api-key">
+      <label for="ai_api_key_env">API Key Env</label>
+      <input id="ai_api_key_env" name="ai_api_key_env" type="text" value="{{ config.ai.api_key_env or '' }}">
+    </div>
+    <div class="span-3 provider-field" data-provider-field="codex-thinking">
+      <label for="codex_reasoning_effort">Codex Thinking</label>
+      <select id="codex_reasoning_effort" name="codex_reasoning_effort">
+        {% for effort in ["minimal", "low", "medium", "high"] %}
+          <option value="{{ effort }}" {% if ('model_reasoning_effort="' ~ effort ~ '"' in codex_args) or (not codex_args and effort == "medium") %}selected{% endif %}>{{ effort }}</option>
+        {% endfor %}
+      </select>
+    </div>
+  </div>
+
+  <h2>Run Defaults</h2>
   <div class="row">
     <div class="span-3">
       <label for="web_default_hours">Default Hours</label>
@@ -33,7 +194,7 @@
     {% endfor %}
   </div>
   <label class="checkline"><input type="checkbox" name="publishing_enabled" {% if config.publishing.enabled %}checked{% endif %}> Publishing enabled for CLI runs</label>
-  <button type="submit">Save</button>
+  <button type="submit" data-testid="save-basic-settings">Save</button>
 </form>
 {% endif %}
 {% endblock %}

@@ -10,6 +10,7 @@ import uuid
 from abc import ABC, abstractmethod
 from pathlib import Path
 from typing import Optional
+from urllib.parse import urlparse
 
 from anthropic import AsyncAnthropic
 from openai import AsyncOpenAI, AsyncAzureOpenAI
@@ -357,11 +358,12 @@ class OpenAIClient(AIClient):
         """
         self.config = config
 
-        if not config.api_key_env:
-            raise ValueError("Missing API key environment variable name for OpenAI provider")
-
-        api_key = os.getenv(config.api_key_env)
+        api_key = os.getenv(config.api_key_env) if config.api_key_env else None
+        if not api_key and self._is_local_base_url(config.base_url):
+            api_key = "lm-studio"
         if not api_key:
+            if not config.api_key_env:
+                raise ValueError("Missing API key environment variable name for OpenAI provider")
             raise ValueError(f"Missing API key: {config.api_key_env}")
 
         kwargs = {"api_key": api_key}
@@ -372,6 +374,15 @@ class OpenAIClient(AIClient):
         self.model = config.model
         self.temperature = config.temperature
         self.max_tokens = config.max_tokens
+        self._uses_local_base_url = self._is_local_base_url(config.base_url)
+        self.uses_local_base_url = self._uses_local_base_url
+
+    @staticmethod
+    def _is_local_base_url(base_url: Optional[str]) -> bool:
+        if not base_url:
+            return False
+        parsed = urlparse(base_url)
+        return parsed.hostname in {"127.0.0.1", "localhost", "::1"}
 
     async def complete(
         self,
@@ -394,16 +405,17 @@ class OpenAIClient(AIClient):
         temperature = self.temperature if temperature is None else temperature
         max_tokens = self.max_tokens if max_tokens is None else max_tokens
 
-        response = await self.client.chat.completions.create(
-            model=self.model,
-            messages=[
+        request = {
+            "model": self.model,
+            "messages": [
                 {"role": "system", "content": system},
                 {"role": "user", "content": user}
             ],
-            temperature=temperature,
-            max_tokens=max_tokens,
-            response_format={"type": "json_object"}
-        )
+            "temperature": temperature,
+            "max_tokens": max_tokens,
+            "response_format": {"type": "text"} if self._uses_local_base_url else {"type": "json_object"},
+        }
+        response = await self.client.chat.completions.create(**request)
         usage = getattr(response, "usage", None)
         if usage is not None:
             record_usage(

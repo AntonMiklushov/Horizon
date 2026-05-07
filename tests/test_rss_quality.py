@@ -5,9 +5,10 @@ import logging
 from datetime import datetime, timedelta, timezone
 
 import httpx
+import pytest
 
 from src.models import RSSSourceConfig
-from src.scrapers.rss import RSSScraper
+from src.scrapers.rss import RSSFetchError, RSSScraper
 
 
 FEED = """<?xml version="1.0"?>
@@ -66,10 +67,37 @@ def test_rss_fetch_error_redacts_expanded_url_secret(caplog, monkeypatch):
         return httpx.Response(403, request=request)
 
     client = httpx.AsyncClient(transport=httpx.MockTransport(handler))
+    scraper = RSSScraper([source], client)
     with caplog.at_level(logging.WARNING):
-        items = asyncio.run(RSSScraper([source], client).fetch(datetime.now(timezone.utc) - timedelta(hours=1)))
+        with pytest.raises(RSSFetchError, match="All 1 enabled RSS feeds failed"):
+            asyncio.run(scraper.fetch(datetime.now(timezone.utc) - timedelta(hours=1)))
     asyncio.run(client.aclose())
 
-    assert items == []
     assert "super-secret-token" not in caplog.text
     assert "key=%3Credacted%3E" in caplog.text
+    assert scraper.fetch_summary == {"attempted": 1, "failed": 1, "items": 0}
+    assert scraper.fetch_diagnostics[0]["source"] == "LWN"
+    assert scraper.fetch_diagnostics[0]["url"] == "https://lwn.net/headlines/full_text?key=%3Credacted%3E"
+    assert "super-secret-token" not in str(scraper.fetch_diagnostics)
+
+
+def test_rss_partial_feed_failure_keeps_successful_items():
+    sources = [
+        RSSSourceConfig(name="Bad", url="https://bad.example.com/feed.xml"),
+        RSSSourceConfig(name="Good", url="https://good.example.com/feed.xml"),
+    ]
+
+    def handler(request: httpx.Request) -> httpx.Response:
+        if request.url.host == "bad.example.com":
+            return httpx.Response(500, request=request)
+        return httpx.Response(200, text=FEED, request=request)
+
+    client = httpx.AsyncClient(transport=httpx.MockTransport(handler))
+    scraper = RSSScraper(sources, client)
+    items = asyncio.run(scraper.fetch(datetime(2026, 5, 2, tzinfo=timezone.utc)))
+    asyncio.run(client.aclose())
+
+    assert len(items) == 1
+    assert items[0].metadata["feed_name"] == "Good"
+    assert scraper.fetch_summary == {"attempted": 2, "failed": 1, "items": 1}
+    assert scraper.fetch_diagnostics[0]["source"] == "Bad"

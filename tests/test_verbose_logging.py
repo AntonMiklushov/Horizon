@@ -1,5 +1,10 @@
 from __future__ import annotations
 
+import asyncio
+from datetime import datetime, timezone
+
+import pytest
+
 from src.main import build_parser
 from src.models import AIConfig, AIProvider, Config, FilteringConfig, SourcesConfig
 from src.orchestrator import HorizonOrchestrator
@@ -12,6 +17,21 @@ class CaptureConsole:
 
     def print(self, *objects, **kwargs) -> None:
         self.messages.append(" ".join(str(obj) for obj in objects))
+
+
+class CaptureReporter:
+    def __init__(self) -> None:
+        self.calls: list[tuple[str, str, dict]] = []
+
+    def start(self, stage: str, **fields):
+        self.calls.append(("start", stage, fields))
+        return 1.0
+
+    def end(self, stage: str, started_at=None, **fields):
+        self.calls.append(("end", stage, fields))
+
+    def event(self, name: str, **fields):
+        self.calls.append(("event", name, fields))
 
 
 def _config() -> Config:
@@ -76,3 +96,58 @@ def test_orchestrator_verbose_true_prints_stage_counters_and_redacts() -> None:
     assert "<redacted>" in output
     assert "secret-value" not in output
     assert "token-value" not in output
+
+
+def test_fetch_with_progress_records_failed_source(tmp_path) -> None:
+    class BrokenScraper:
+        fetch_diagnostics = [
+            {"source": "Feed", "error": "ConnectError", "message": "Connection failed"},
+        ]
+
+        async def fetch(self, since):  # type: ignore[no-untyped-def]
+            raise RuntimeError("source down")
+
+    orchestrator = HorizonOrchestrator(
+        _config(),
+        StorageManager(data_dir=str(tmp_path / "data")),
+    )
+    reporter = CaptureReporter()
+    orchestrator.verbose_reporter = reporter  # type: ignore[assignment]
+    orchestrator.console = CaptureConsole()
+
+    with pytest.raises(RuntimeError, match="source down"):
+        asyncio.run(orchestrator._fetch_with_progress("RSS Feeds", BrokenScraper(), datetime.now(timezone.utc)))
+
+    assert reporter.calls[-1][0] == "end"
+    assert reporter.calls[-1][1] == "source.RSS Feeds"
+    assert reporter.calls[-1][2]["status"] == "failed"
+    assert reporter.calls[-1][2]["message"] == "Fetch failed for RSS Feeds"
+    assert reporter.calls[-1][2]["diagnostic_count"] == 1
+    assert reporter.calls[-1][2]["diagnostics"][0]["source"] == "Feed"
+
+
+def test_fetch_with_progress_records_source_warnings(tmp_path) -> None:
+    class WarningScraper:
+        fetch_diagnostics = [
+            {"source": "Feed", "error": "HTTPStatusError", "message": "HTTP 500"},
+        ]
+
+        async def fetch(self, since):  # type: ignore[no-untyped-def]
+            return []
+
+    orchestrator = HorizonOrchestrator(
+        _config(),
+        StorageManager(data_dir=str(tmp_path / "data")),
+    )
+    reporter = CaptureReporter()
+    orchestrator.verbose_reporter = reporter  # type: ignore[assignment]
+    orchestrator.console = CaptureConsole()
+
+    items = asyncio.run(orchestrator._fetch_with_progress("RSS Feeds", WarningScraper(), datetime.now(timezone.utc)))
+
+    assert items == []
+    assert reporter.calls[-1][0] == "end"
+    assert reporter.calls[-1][1] == "source.RSS Feeds"
+    assert reporter.calls[-1][2]["status"] == "warning"
+    assert reporter.calls[-1][2]["message"] == "Fetched RSS Feeds with source warnings"
+    assert reporter.calls[-1][2]["diagnostic_count"] == 1

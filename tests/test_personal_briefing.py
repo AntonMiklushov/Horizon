@@ -56,6 +56,12 @@ def mk_orchestrator(tmp_path, personal=None, languages=None):
     return HorizonOrchestrator(cfg, StorageManager(data_dir=str(tmp_path / "data")))
 
 
+def test_personal_summary_title_is_neutral(tmp_path):
+    o = mk_orchestrator(tmp_path, personal={"enabled": True, "language": "ru"})
+
+    assert o._summary_title("2026-05-03", "ru") == "Сводка - 2026-05-03"
+
+
 def test_prompt_format_does_not_crash():
     rendered = PERSONAL_BRIEFING_ANALYSIS_USER.format(
         title="Test title",
@@ -228,7 +234,8 @@ def test_renderer_required_sections_and_labels():
 
     out = PersonalBriefingRenderer().render("2026-05-03", items + [ru, official, disputed])
 
-    assert "## Главное" in out
+    assert out.startswith("# Сводка — 2026-05-03")
+    assert "## Главное" not in out
     assert "## Россия" in out
     assert "## Москва" in out
     assert "## Мировая экономика" in out
@@ -251,6 +258,8 @@ def test_renderer_required_sections_and_labels():
         "Источники",
     ]:
         assert label in out
+    for topic in ["russia", "moscow", "world_economy", "tech_ai", "open_source", "big_tech", "science", "world", "other"]:
+        assert out.count(f"### {topic} title") == 1
 
 
 def test_renderer_does_not_render_main_for_disputed_only():
@@ -278,6 +287,7 @@ def test_renderer_puts_unknown_topics_in_other_without_critic_warning():
 
     assert "## Другое" in out
     assert "### security item" in out
+    assert out.count("### security item") == 1
     assert critic.passed is True
 
 
@@ -426,6 +436,7 @@ def test_personal_no_items_saves_empty_without_analyze(tmp_path, monkeypatch):
     files = list((tmp_path / "data" / "summaries").glob("*-ru.md"))
     assert len(files) == 1
     text = files[0].read_text(encoding="utf-8")
+    assert text.startswith("# Сводка — ")
     assert "Сегодня нет событий" in text
     assert not list((tmp_path / "data" / "summaries").glob("*-en.md"))
     assert not list((tmp_path / "data" / "summaries").glob("*-zh.md"))

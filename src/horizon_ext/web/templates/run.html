@@ -1,30 +1,135 @@
 {% extends "base.html" %}
 {% block title %}Run {{ run_id }}{% endblock %}
 {% block head %}
-{% if run_state and run_state.status in ["queued", "running"] %}
 <script>
-  async function refreshRun() {
-    const response = await fetch("/api/runs/{{ run_id }}");
-    const payload = await response.json();
-    const state = payload.state;
-    if (state) {
-      document.querySelector("[data-run-status]").textContent = state.status;
-      document.querySelector("[data-run-message]").textContent = state.message || "";
-      if (state.status === "completed" || state.status === "failed") {
-        window.location.reload();
-      }
+  let runReloadScheduled = false;
+
+  function setText(selector, value) {
+    const element = document.querySelector(selector);
+    if (element) {
+      element.textContent = value || "";
     }
   }
+
+  function formatTraceTime(timestamp) {
+    if (!timestamp) {
+      return "";
+    }
+    const date = new Date(timestamp);
+    if (Number.isNaN(date.getTime())) {
+      return timestamp;
+    }
+    return date.toLocaleTimeString([], { hour: "2-digit", minute: "2-digit", second: "2-digit" });
+  }
+
+  function renderTraceList(selector, events, limit, includeFields) {
+    const list = document.querySelector(selector);
+    if (!list) {
+      return;
+    }
+    list.textContent = "";
+    const visibleEvents = (events || []).slice(-limit).reverse();
+    if (visibleEvents.length === 0) {
+      const empty = document.createElement("li");
+      empty.className = "activity-empty";
+      empty.textContent = "No model activity has been recorded yet.";
+      list.appendChild(empty);
+      return;
+    }
+    visibleEvents.forEach((event) => {
+      const item = document.createElement("li");
+      item.className = "activity-event";
+
+      const time = document.createElement("time");
+      time.textContent = formatTraceTime(event.timestamp);
+      item.appendChild(time);
+
+      const status = document.createElement("span");
+      status.className = "activity-status";
+      status.textContent = event.status || "event";
+      item.appendChild(status);
+
+      const detail = document.createElement("span");
+      detail.className = "activity-detail";
+      detail.textContent = event.message || event.stage || "Activity event";
+      item.appendChild(detail);
+
+      if (includeFields && event.fields && Object.keys(event.fields).length > 0) {
+        const fields = document.createElement("span");
+        fields.className = "activity-fields";
+        fields.textContent = JSON.stringify(event.fields);
+        item.appendChild(fields);
+      }
+
+      list.appendChild(item);
+    });
+  }
+
+  function updateStageRail(stages, currentStage) {
+    const completed = {
+      fetch: Boolean(stages && stages.raw),
+      analyze: Boolean(stages && stages.scored),
+      filter: Boolean(stages && stages.filtered),
+      enrich: Boolean(stages && stages.enriched),
+      summary: Boolean(stages && stages.summary),
+    };
+    document.querySelectorAll("[data-stage-step]").forEach((step) => {
+      const key = step.dataset.stageStep;
+      step.classList.toggle("complete", Boolean(completed[key]));
+      step.classList.toggle("active", key === currentStage);
+    });
+  }
+
+  function updateActivity(payload) {
+    const activity = payload.activity || {};
+    setText("[data-activity-stage]", activity.stage || "pipeline");
+    setText("[data-activity-message]", activity.message || "");
+    const progress = document.querySelector("[data-activity-progress]");
+    if (progress) {
+      const percent = Math.max(0, Math.min(100, Number(activity.progress_percent || 0)));
+      progress.style.setProperty("--activity-progress", `${percent}%`);
+    }
+    updateStageRail(payload.stages || {}, activity.stage || "");
+    renderTraceList("[data-trace-list]", payload.trace || [], 8, false);
+    renderTraceList("[data-trace-full-list]", payload.trace || [], 120, true);
+  }
+
+  async function refreshRun() {
+    try {
+      const response = await fetch("/api/runs/{{ run_id }}");
+      if (!response.ok) {
+        throw new Error(`HTTP ${response.status}`);
+      }
+      const payload = await response.json();
+      const state = payload.state;
+      if (state) {
+        setText("[data-run-status]", state.status);
+        setText("[data-run-message]", state.message || "");
+        if (state.status === "completed" || state.status === "failed" || state.status === "cancelled") {
+          if (!runReloadScheduled) {
+            runReloadScheduled = true;
+            window.setTimeout(() => window.location.reload(), 800);
+          }
+        }
+      }
+      updateActivity(payload);
+    } catch (error) {
+      setText("[data-activity-message]", `Activity refresh failed: ${error.message}`);
+    }
+  }
+  {% if run_state and run_state.status in ["queued", "running", "cancelling"] %}
   window.setInterval(refreshRun, 2500);
+  {% endif %}
 </script>
-{% endif %}
 <script>
   function showRunTab(target) {
     document.querySelectorAll("[data-tab-panel]").forEach((panel) => {
       panel.hidden = panel.dataset.tabPanel !== target;
     });
     document.querySelectorAll("[data-tab-target]").forEach((button) => {
-      button.classList.toggle("active", button.dataset.tabTarget === target);
+      const active = button.dataset.tabTarget === target;
+      button.classList.toggle("active", active);
+      button.setAttribute("aria-selected", active ? "true" : "false");
     });
   }
 </script>
@@ -37,13 +142,31 @@
   {% if run_state %}
     <p><span class="pill" data-run-status>{{ run_state.status }}</span> <span data-run-message>{{ run_state.message }}</span></p>
     {% if run_state.error %}<p class="bad">{{ run_state.error }}</p>{% endif %}
+    {% if run_failure_diagnostic %}
+      <div class="notice error" data-testid="run-failure-diagnostic">
+        <strong>Earlier failed activity:</strong> {{ run_failure_diagnostic }}
+      </div>
+    {% endif %}
+    {% if run_state.status in ["queued", "running", "cancelling"] %}
+      <form method="post" action="/runs/{{ run_id }}/cancel" class="inline-form">
+        <button type="submit" class="danger" data-testid="cancel-run" {% if run_state.status == "cancelling" %}disabled{% endif %}>
+          {{ "Cancelling..." if run_state.status == "cancelling" else "Cancel run" }}
+        </button>
+      </form>
+    {% endif %}
   {% elif meta %}
-    <p><span class="pill">saved</span></p>
+    <p><span class="pill">{{ meta.status or "saved" }}</span></p>
   {% else %}
     <p class="bad">Run not found.</p>
   {% endif %}
   {% if meta %}
     <p class="muted">Hours: {{ meta.hours }} | Raw: {{ meta.raw_count or meta.raw_count_before_merge }} | Local only: {{ meta.local_only }}</p>
+    {% if meta.current_stage or meta.status %}
+      <p class="muted">Persisted state: {{ meta.status or "unknown" }}{% if meta.current_stage %} | Stage: {{ meta.current_stage }}{% endif %}</p>
+    {% endif %}
+    {% if personal_prefilter_note %}
+      <div class="notice" data-testid="personal-prefilter-run-note">{{ personal_prefilter_note }}</div>
+    {% endif %}
     {% if meta.run_instructions %}<p><strong>Instructions:</strong> {{ meta.run_instructions }}</p>{% endif %}
   {% endif %}
   <div>
@@ -53,14 +176,44 @@
   </div>
 </section>
 
-<div class="tabbar">
-  <button type="button" class="tab-button active" data-tab-target="report" onclick="showRunTab('report')">Report</button>
-  <button type="button" class="tab-button" data-tab-target="markdown" onclick="showRunTab('markdown')">Markdown</button>
-  <button type="button" class="tab-button" data-tab-target="items" onclick="showRunTab('items')">Items</button>
-  <button type="button" class="tab-button" data-tab-target="raw" onclick="showRunTab('raw')">Raw Data</button>
+<section class="panel model-activity" data-model-activity>
+  <div class="activity-top">
+    <div>
+      <h2>Model Activity</h2>
+      <p><span class="pill" data-activity-stage>{{ activity.stage }}</span></p>
+      <p class="activity-message" data-activity-message>{{ activity.message }}</p>
+    </div>
+    <div class="activity-progress" data-activity-progress style="--activity-progress: {{ activity.progress_percent }}%;">
+      <span></span>
+    </div>
+  </div>
+  <ol class="stage-rail">
+    {% for step in activity_stages %}
+      <li class="stage-step{% if step.complete %} complete{% endif %}{% if step.active %} active{% endif %}" data-stage-step="{{ step.key }}">{{ step.label }}</li>
+    {% endfor %}
+  </ol>
+  <ul class="activity-list" data-trace-list>
+    {% for event in recent_trace_events|reverse %}
+      <li class="activity-event">
+        <time>{{ event.timestamp }}</time>
+        <span class="activity-status">{{ event.status }}</span>
+        <span class="activity-detail">{{ event.message }}</span>
+      </li>
+    {% else %}
+      <li class="activity-empty">No model activity has been recorded yet.</li>
+    {% endfor %}
+  </ul>
+</section>
+
+<div class="tabbar" role="tablist" aria-label="Run artifacts">
+  <button type="button" class="tab-button active" data-tab-target="report" data-testid="tab-report" role="tab" aria-controls="run-tab-report" aria-selected="true" onclick="showRunTab('report')">Report</button>
+  <button type="button" class="tab-button" data-tab-target="activity" data-testid="tab-activity" role="tab" aria-controls="run-tab-activity" aria-selected="false" onclick="showRunTab('activity')">Activity</button>
+  <button type="button" class="tab-button" data-tab-target="markdown" data-testid="tab-markdown" role="tab" aria-controls="run-tab-markdown" aria-selected="false" onclick="showRunTab('markdown')">Markdown</button>
+  <button type="button" class="tab-button" data-tab-target="items" data-testid="tab-items" role="tab" aria-controls="run-tab-items" aria-selected="false" onclick="showRunTab('items')">Items</button>
+  <button type="button" class="tab-button" data-tab-target="raw" data-testid="tab-raw" role="tab" aria-controls="run-tab-raw" aria-selected="false" onclick="showRunTab('raw')">Raw Data</button>
 </div>
 
-<section data-tab-panel="report">
+<section id="run-tab-report" data-tab-panel="report" role="tabpanel">
   {% if rendered_summary %}
     <h2>Report</h2>
     <article class="report">{{ rendered_summary | safe }}</article>
@@ -71,7 +224,23 @@
   {% endif %}
 </section>
 
-<section data-tab-panel="markdown" hidden>
+<section id="run-tab-activity" data-tab-panel="activity" role="tabpanel" hidden>
+  <h2>Activity</h2>
+  <ul class="activity-list" data-trace-full-list>
+    {% for event in trace_events|reverse %}
+      <li class="activity-event">
+        <time>{{ event.timestamp }}</time>
+        <span class="activity-status">{{ event.status }}</span>
+        <span class="activity-detail">{{ event.message }}</span>
+        {% if event.fields %}<span class="activity-fields">{{ event.fields | tojson }}</span>{% endif %}
+      </li>
+    {% else %}
+      <li class="activity-empty">No model activity has been recorded yet.</li>
+    {% endfor %}
+  </ul>
+</section>
+
+<section id="run-tab-markdown" data-tab-panel="markdown" role="tabpanel" hidden>
   {% if summaries %}
     <h2>Markdown</h2>
     {% for summary in summaries %}
@@ -83,7 +252,7 @@
   {% endif %}
 </section>
 
-<section data-tab-panel="items" hidden>
+<section id="run-tab-items" data-tab-panel="items" role="tabpanel" hidden>
   {% if items %}
     <h2>Items</h2>
     <table>
@@ -104,7 +273,7 @@
   {% endif %}
 </section>
 
-<section data-tab-panel="raw" hidden>
+<section id="run-tab-raw" data-tab-panel="raw" role="tabpanel" hidden>
   {% if stage_payloads %}
     <h2>Raw Data</h2>
     {% for payload in stage_payloads %}

@@ -70,3 +70,20 @@ def test_daily_workflow_materializes_runtime_config_from_secret() -> None:
     assert "HORIZON_CONFIG_JSON: ${{ secrets.HORIZON_CONFIG_JSON }}" in workflow
     assert "printf '%s' \"$HORIZON_CONFIG_JSON\" > data/config.json" in workflow
     assert "python -m json.tool data/config.json > /dev/null" in workflow
+
+
+def test_windows_web_launcher_opens_local_dashboard_without_auto_install() -> None:
+    launcher = (ROOT / "start-horizon-web.cmd").read_text(encoding="utf-8")
+    normalized = launcher.lower()
+
+    assert "127.0.0.1" in launcher
+    assert "8787" in launcher
+    assert "%LOCALAPPDATA%\\HorizonBrief" in launcher
+    assert "venv\\Scripts\\python.exe" in launcher
+    assert "-m src.horizon_ext.web.main" in launcher
+    assert 'start "" "%URL%"' in launcher
+    assert "invoke-webrequest" in normalized
+    assert "ready_timeout_seconds" in normalized
+
+    for forbidden in ["uv sync", "pip install", "python -m pip", "pip3 install"]:
+        assert forbidden not in normalized

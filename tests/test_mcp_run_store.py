@@ -41,6 +41,44 @@ def test_update_meta_sets_updated_at(tmp_path: Path) -> None:
     assert "updated_at" in meta
 
 
+def test_trace_events_append_and_load_recent_in_order(tmp_path: Path) -> None:
+    store = RunStore(tmp_path)
+    run_id = store.create_run("run-trace")
+
+    path = store.append_trace_event(run_id, {"message": "first"})
+    store.append_trace_event(run_id, {"message": "second"})
+    store.append_trace_event(run_id, {"message": "third"})
+
+    assert path.name == "trace.jsonl"
+    assert store.load_trace_events(run_id, limit=2) == [
+        {"message": "second"},
+        {"message": "third"},
+    ]
+
+
+def test_trace_events_ignore_malformed_partial_lines(tmp_path: Path) -> None:
+    store = RunStore(tmp_path)
+    run_id = store.create_run("run-trace-partial")
+    trace_path = store.run_dir(run_id) / "trace.jsonl"
+    trace_path.write_text(
+        '{"message":"first"}\n{"message":\n{"message":"second"}\n',
+        encoding="utf-8",
+    )
+
+    assert store.load_trace_events(run_id, limit=10) == [
+        {"message": "first"},
+        {"message": "second"},
+    ]
+
+
+def test_trace_event_limit_must_be_positive(tmp_path: Path) -> None:
+    store = RunStore(tmp_path)
+    run_id = store.create_run("run-trace-empty")
+    store.append_trace_event(run_id, {"message": "hidden"})
+
+    assert store.load_trace_events(run_id, limit=0) == []
+
+
 def test_write_json_falls_back_when_atomic_replace_is_denied(
     tmp_path: Path, monkeypatch
 ) -> None:

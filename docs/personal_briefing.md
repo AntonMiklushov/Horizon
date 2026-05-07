@@ -16,7 +16,9 @@ This mode adds a conservative editorial and evidence layer on top of Horizon's e
 - `context_layer`: analysis/context sources such as FT and The Economist.
 - `official_primary_source`: official pages such as `mos.ru`; for sensitive claims they are treated as official statements, not independent confirmation.
 - `russian_institutional_frame`: Russian institutional/media sources such as Interfax, Kommersant, and RBC. For sensitive claims they provide frame/statement context, not independent confirmation.
-- `science_primary_source` and `science_preprint`: journal/preprint sources. arXiv is labeled as not peer-reviewed.
+- `science_primary_source`: journals and official science institutions.
+- `science_preprint`: preprint servers such as arXiv, bioRxiv, medRxiv, and ChemRxiv. Preprints are labeled `not peer-reviewed` and cannot stay as high-confidence confirmed facts without additional evidence.
+- `science_source_finder`: discovery platforms such as EurekAlert. These can surface early leads but require verification against a paper, journal, or institution before factual confirmation.
 - `tech_primary_source`: primary technical release sources such as GitHub releases.
 - `blocked_as_fact_source` and `unclassified`: excluded before LLM scoring in personal mode.
 - Social sources are not factual confirmation. Allowed social actors may only enter as `primary_statement`; social posts can never remain `confirmed_fact`.

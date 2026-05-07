@@ -51,15 +51,41 @@ def conservative_default_policy() -> SourcePolicy:
         "ecb.europa.eu": {"role": "official_primary_source", "tier": "tier1", "name": "European Central Bank"},
         "cbr.ru": {"role": "official_primary_source", "tier": "tier1", "name": "Bank of Russia"},
         "sec.gov": {"role": "official_primary_source", "tier": "tier1", "name": "SEC"},
-        "nasa.gov": {"role": "science_primary_source", "tier": "tier1", "name": "NASA"},
         "jpl.nasa.gov": {"role": "science_primary_source", "tier": "tier1", "name": "NASA JPL"},
+        "nasa.gov": {"role": "science_primary_source", "tier": "tier1", "name": "NASA"},
+        "esa.int": {"role": "science_primary_source", "tier": "tier1", "name": "ESA"},
+        "cern.ch": {"role": "science_primary_source", "tier": "tier1", "name": "CERN"},
+        "home.cern": {"role": "science_primary_source", "tier": "tier1", "name": "CERN"},
+        "nsf.gov": {"role": "science_primary_source", "tier": "tier1", "name": "NSF"},
+        "nih.gov": {"role": "science_primary_source", "tier": "tier1", "name": "NIH"},
+        "noaa.gov": {"role": "science_primary_source", "tier": "tier1", "name": "NOAA"},
+        "cdc.gov": {"role": "science_primary_source", "tier": "tier1", "name": "CDC"},
+        "who.int": {"role": "science_primary_source", "tier": "tier1", "name": "WHO"},
         "interfax.ru": {"role": "russian_institutional_frame", "tier": "tier2", "name": "Interfax"},
         "kommersant.ru": {"role": "russian_institutional_frame", "tier": "tier2", "name": "Kommersant"},
         "rbc.ru": {"role": "russian_institutional_frame", "tier": "tier2", "name": "RBC"},
         "mos.ru": {"role": "official_primary_source", "tier": "tier2", "name": "mos.ru"},
         "nature.com": {"role": "science_primary_source", "tier": "tier1", "name": "Nature"},
         "science.org": {"role": "science_primary_source", "tier": "tier1", "name": "Science"},
+        "pnas.org": {"role": "science_primary_source", "tier": "tier1", "name": "PNAS"},
+        "cell.com": {"role": "science_primary_source", "tier": "tier1", "name": "Cell Press"},
+        "plos.org": {"role": "science_primary_source", "tier": "tier1", "name": "PLOS"},
+        "elifesciences.org": {"role": "science_primary_source", "tier": "tier1", "name": "eLife"},
+        "quantamagazine.org": {"role": "context_layer", "tier": "tier1", "name": "Quanta Magazine"},
+        "sciencenews.org": {"role": "context_layer", "tier": "tier1", "name": "Science News"},
+        "scientificamerican.com": {"role": "context_layer", "tier": "tier1", "name": "Scientific American"},
+        "theconversation.com": {"role": "context_layer", "tier": "tier2", "name": "The Conversation"},
+        "arstechnica.com": {"role": "context_layer", "tier": "tier2", "name": "Ars Technica"},
+        "knowablemagazine.org": {"role": "context_layer", "tier": "tier1", "name": "Knowable Magazine"},
+        "newscientist.com": {"role": "context_layer", "tier": "tier2", "name": "New Scientist"},
         "arxiv.org": {"role": "science_preprint", "tier": "tier2", "name": "arXiv"},
+        "biorxiv.org": {"role": "science_preprint", "tier": "tier2", "name": "bioRxiv"},
+        "connect.biorxiv.org": {"role": "science_preprint", "tier": "tier2", "name": "bioRxiv"},
+        "medrxiv.org": {"role": "science_preprint", "tier": "tier2", "name": "medRxiv"},
+        "connect.medrxiv.org": {"role": "science_preprint", "tier": "tier2", "name": "medRxiv"},
+        "chemrxiv.org": {"role": "science_preprint", "tier": "tier2", "name": "ChemRxiv"},
+        "cambridge.org": {"role": "science_preprint", "tier": "tier2", "name": "ChemRxiv / Cambridge Open Engage"},
+        "eurekalert.org": {"role": "science_source_finder", "tier": "tier2", "name": "EurekAlert"},
         "x.com": {"role": "social_primary_statement_only", "tier": "unknown", "name": "Twitter/X"},
         "twitter.com": {"role": "social_primary_statement_only", "tier": "unknown", "name": "Twitter/X"},
         "t.me": {"role": "blocked_as_fact_source", "tier": "unknown", "name": "Telegram"},
@@ -98,10 +124,13 @@ class SourcePolicyClassifier:
         domain = urlparse(str(item.url)).netloc.lower().replace("www.", "")
         source_type = item.source_type.value
         rule = None
-        for d, r in self.policy.source_domain_rules.items():
-            if domain == d or domain.endswith("." + d):
-                rule = r
-                break
+        matches = [
+            (d, r)
+            for d, r in self.policy.source_domain_rules.items()
+            if domain == d or domain.endswith("." + d)
+        ]
+        if matches:
+            _, rule = max(matches, key=lambda match: len(match[0]))
 
         role = "unclassified"
         tier = "unknown"
@@ -128,6 +157,8 @@ class SourcePolicyClassifier:
             out_name = (rule or {}).get("name")
         if role == "science_preprint":
             notes = "not peer-reviewed"
+        elif role == "science_source_finder":
+            notes = "requires verification with paper, journal, or institution"
 
         out = {
             "source_role": role,
@@ -159,6 +190,36 @@ class EvidenceChecker:
             claim_type = ClaimType.UNVERIFIED_REPORT.value
             confidence = "low"
             unsupported.append("source policy does not allow confirmed_fact")
+
+        if role == "science_preprint":
+            note = "not peer-reviewed"
+            current_notes = str(meta.get("source_policy_notes") or "")
+            if note not in current_notes:
+                meta["source_policy_notes"] = f"{current_notes}; {note}".strip("; ")
+            if meta.get("evidence_strength") == "high":
+                meta["evidence_strength"] = "medium"
+            if claim_type == ClaimType.CONFIRMED_FACT.value:
+                claim_type = ClaimType.UNVERIFIED_REPORT.value
+                confidence = "low"
+                meta["evidence_strength"] = "low"
+                unsupported.append("preprint is not peer-reviewed")
+            elif confidence == "high":
+                confidence = "medium"
+
+        if role == "science_source_finder":
+            note = "requires verification with paper, journal, or institution"
+            current_notes = str(meta.get("source_policy_notes") or "")
+            if note not in current_notes:
+                meta["source_policy_notes"] = f"{current_notes}; {note}".strip("; ")
+            if meta.get("evidence_strength") == "high":
+                meta["evidence_strength"] = "medium"
+            if claim_type == ClaimType.CONFIRMED_FACT.value:
+                claim_type = ClaimType.UNVERIFIED_REPORT.value
+                confidence = "low"
+                meta["evidence_strength"] = "low"
+                unsupported.append("source finder is not independent confirmation")
+            elif confidence == "high":
+                confidence = "medium"
 
         if role == "social_primary_statement_only":
             original_claim_type = claim_type
@@ -304,7 +365,7 @@ class PersonalBriefingRenderer:
 
     def render(self, date: str, items: List[ContentItem], tracked: Optional[List[Dict[str, str]]] = None) -> str:
         if not items:
-            lines = [f"# Вечерняя сводка — {date}", "", "Сегодня нет событий, которые проходят заданный порог значимости и доказательности."]
+            lines = [f"# Сводка — {date}", "", "Сегодня нет событий, которые проходят заданный порог значимости и доказательности."]
             if tracked:
                 lines += ["", "## Отслеживалось, но не включено"] + [
                     f"- {t['item']} — причина: {self.REASON_LABELS.get(t['reason'], t['reason'])}"
@@ -314,11 +375,7 @@ class PersonalBriefingRenderer:
 
         highs = [i for i in items if i.metadata.get("confidence") != "low"]
         disputed = [i for i in items if i.metadata.get("confidence") == "low"]
-        out = [f"# Вечерняя сводка — {date}", ""]
-        if highs:
-            out.append("## Главное")
-            for i in highs[:8]:
-                out.append(f"- {i.title} — {i.metadata.get('summary', i.ai_summary or '')}")
+        out = [f"# Сводка — {date}", ""]
 
         sections = [
             ("Россия", "russia"), ("Москва", "moscow"), ("Мировая экономика", "world_economy"),

@@ -158,7 +158,7 @@ def load_config(runtime: HorizonRuntime, config_path: Path) -> Any:
     """Load Horizon config using native pydantic model."""
 
     try:
-        payload = json.loads(config_path.read_text(encoding="utf-8"))
+        payload = json.loads(config_path.read_text(encoding="utf-8-sig"))
         return runtime.Config.model_validate(payload)
     except Exception as exc:
         raise HorizonMcpError(

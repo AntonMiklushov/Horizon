@@ -600,7 +600,35 @@ class HorizonOrchestrator:
         """
         source_timer = self.verbose_reporter.start(f"source.{name}", since=since.isoformat())
         self.console.print(f"🔍 Fetching from {name}...")
-        items = await scraper.fetch(since)
+        try:
+            items = await scraper.fetch(since)
+        except asyncio.CancelledError:
+            self.verbose_reporter.end(
+                f"source.{name}",
+                source_timer,
+                status="cancelled",
+                message=f"Cancelled while fetching {name}",
+            )
+            raise
+        except Exception as exc:
+            diagnostics = self._scraper_diagnostics(scraper)
+            fields: dict[str, Any] = {
+                "status": "failed",
+                "error": type(exc).__name__,
+                "message": f"Fetch failed for {name}",
+            }
+            safe_detail = getattr(exc, "safe_detail", None)
+            if safe_detail:
+                fields["detail"] = safe_detail
+            if diagnostics:
+                fields["diagnostic_count"] = self._scraper_diagnostic_count(scraper)
+                fields["diagnostics"] = diagnostics
+            self.verbose_reporter.end(
+                f"source.{name}",
+                source_timer,
+                **fields,
+            )
+            raise
         self.console.print(f"   Found {len(items)} items from {name}")
 
         # Show per-sub-source breakdown when there are multiple sub-sources
@@ -613,13 +641,36 @@ class HorizonOrchestrator:
             for sub, count in sorted(sub_counts.items()):
                 self.console.print(f"      • {sub}: {count}")
 
-        self.verbose_reporter.end(
-            f"source.{name}",
-            source_timer,
-            items=len(items),
-            sub_sources=dict(sorted(sub_counts.items())),
-        )
+        fields = {
+            "items": len(items),
+            "sub_sources": dict(sorted(sub_counts.items())),
+        }
+        diagnostics = self._scraper_diagnostics(scraper)
+        if diagnostics:
+            fields["status"] = "warning"
+            fields["message"] = f"Fetched {name} with source warnings"
+            fields["diagnostic_count"] = self._scraper_diagnostic_count(scraper)
+            fields["diagnostics"] = diagnostics
+        self.verbose_reporter.end(f"source.{name}", source_timer, **fields)
         return items
+
+    @staticmethod
+    def _scraper_diagnostics(scraper: Any) -> list[dict[str, Any]]:
+        diagnostics = getattr(scraper, "fetch_diagnostics", None)
+        if not isinstance(diagnostics, list):
+            return []
+        normalized: list[dict[str, Any]] = []
+        for diagnostic in diagnostics[:10]:
+            if isinstance(diagnostic, dict):
+                normalized.append({str(key): value for key, value in diagnostic.items() if value is not None})
+            else:
+                normalized.append({"message": str(diagnostic)})
+        return normalized
+
+    @staticmethod
+    def _scraper_diagnostic_count(scraper: Any) -> int:
+        diagnostics = getattr(scraper, "fetch_diagnostics", None)
+        return len(diagnostics) if isinstance(diagnostics, list) else 0
 
     def _classify_personal_source_metadata(self, items: List[ContentItem]) -> None:
         if not self.personal_classifier:
@@ -665,7 +716,7 @@ class HorizonOrchestrator:
 
     def _summary_title(self, date: str, language: str) -> str:
         if self.config.personal_briefing.enabled and language == self.config.personal_briefing.language:
-            return f"Вечерняя сводка - {date}"
+            return f"Сводка - {date}"
         return f"Horizon Brief Summary: {date} ({language.upper()})"
 
     def _publish_jekyll_post(self, date: str, language: str, content: str):

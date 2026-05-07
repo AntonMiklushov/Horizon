@@ -7,34 +7,48 @@
   <div class="notice error">{{ config_error }}</div>
 {% endif %}
 
+{% if run_error %}
+  <div class="notice error">{{ run_error }}</div>
+{% endif %}
+
 {% if validation and validation.missing_env %}
   <div class="notice error">Missing environment: {{ validation.missing_env | join(", ") }}</div>
 {% elif validation and validation.warnings %}
   <div class="notice">{{ validation.warnings | join("; ") }}</div>
 {% endif %}
 
-<div class="grid two">
+{% if personal_prefilter_active %}
+  <div class="notice" data-testid="personal-prefilter-dashboard-notice">
+    Personal briefing prefilter is active. Runs only score fetched items that match configured priority topics.
+  </div>
+{% endif %}
+
+<div class="dashboard-grid">
   <section class="panel">
     <h2>Run Report</h2>
-    <form method="post" action="/runs">
-      <div class="row">
-        <div class="span-3">
+    <form method="post" action="/runs" data-testid="run-report-form">
+      <div class="run-default-grid">
+        <div>
           <label for="hours">Hours</label>
           <input id="hours" name="hours" type="number" min="1" max="720" value="{{ default_hours }}">
         </div>
-        <div class="span-3">
+        <div>
           <label for="threshold">Threshold</label>
           <input id="threshold" name="threshold" type="number" min="0" max="10" step="0.1" value="{{ config.filtering.ai_score_threshold if config else '' }}">
         </div>
-        <div class="span-6">
+        <div>
           <label for="languages">Languages</label>
           <input id="languages" name="languages" type="text" value="{{ config.ai.languages | join(', ') if config else 'en' }}">
+        </div>
+        <div>
+          <label for="max_ai_items">AI Item Cap</label>
+          <input id="max_ai_items" name="max_ai_items" type="number" min="1" max="200" value="{{ default_ai_item_cap or '' }}">
         </div>
       </div>
       <label>Sources</label>
       <div class="checks">
         {% for source in sources %}
-          <label class="checkline"><input type="checkbox" name="sources" value="{{ source }}" checked> {{ source }}</label>
+          <label class="checkline"><input type="checkbox" name="sources" value="{{ source }}" {% if source in enabled_sources %}checked{% endif %}> {{ source }}</label>
         {% endfor %}
       </div>
       <label for="instructions">Selection Instructions</label>
@@ -43,7 +57,7 @@
         <label class="checkline"><input type="checkbox" name="enrich" checked> Enrich</label>
         <label class="checkline"><input type="checkbox" name="topic_dedup" checked> Topic dedup</label>
       </div>
-      <button type="submit">Run</button>
+      <button type="submit" data-testid="run-submit">Run</button>
     </form>
   </section>
 
@@ -58,7 +72,7 @@
           </div>
         {% endfor %}
       </div>
-      <p class="muted">Provider: {{ config.ai.provider.value }} / {{ config.ai.model }}</p>
+      <p class="muted">Provider: {{ provider_label }} / {{ config.ai.model }}</p>
       <p>
         <a class="button secondary" href="/settings/basic">Edit Settings</a>
         <a class="button secondary" href="/settings/sources">Edit Sources</a>

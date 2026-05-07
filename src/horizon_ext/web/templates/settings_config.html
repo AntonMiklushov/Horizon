@@ -1,0 +1,40 @@
+{% extends "base.html" %}
+{% block title %}Full Config{% endblock %}
+{% block content %}
+<div class="page-header">
+  <div>
+    <h1>Full Config</h1>
+    <p class="muted">Edit the validated Horizon configuration JSON.</p>
+  </div>
+  <div class="header-actions">
+    <a class="button secondary" href="/settings/basic">Basic Settings</a>
+    <a class="button secondary" href="/settings/sources">Sources</a>
+  </div>
+</div>
+
+{% if saved %}<div class="notice saved">Config saved to {{ saved_target }}.</div>{% endif %}
+{% if error %}<div class="notice error">{{ error }}</div>{% endif %}
+{% if config_error %}<div class="notice error">{{ config_error }}</div>{% endif %}
+
+<section class="panel">
+  <h2>Config Paths</h2>
+  <p class="muted">Config path: <code>{{ config_source_path }}</code></p>
+  {% if config_fallback_active %}
+    <p class="muted">Runtime copy: <code>{{ config_active_path }}</code></p>
+    <p class="warn">The app is currently using a runtime copy. Use "Save to Source Config" after the source file becomes writable.</p>
+  {% else %}
+    <p class="ok">The app is editing the source config directly.</p>
+  {% endif %}
+</section>
+
+<form method="post" class="panel" data-testid="full-config-form">
+  <label for="config_json">Configuration JSON</label>
+  <textarea id="config_json" name="config_json" class="config-editor" spellcheck="false" data-testid="config-json">{{ config_json }}</textarea>
+  <div class="form-actions">
+    <button type="submit" name="save_target" value="primary" data-testid="save-config-primary">Save to Source Config</button>
+    {% if config_fallback_active %}
+      <button type="submit" name="save_target" value="runtime" class="secondary" data-testid="save-config-runtime">Save Runtime Copy Only</button>
+    {% endif %}
+  </div>
+</form>
+{% endblock %}

@@ -5,9 +5,19 @@ from datetime import datetime, timezone
 from pathlib import Path
 from types import SimpleNamespace
 
+import pytest
+
 from src.models import ContentItem, SourceType
 from src.mcp.server import hz_get_metrics
 from src.mcp.service import HorizonPipelineService
+
+
+class CaptureTrace:
+    def __init__(self) -> None:
+        self.events = []
+
+    def event(self, name: str, **fields):  # type: ignore[no-untyped-def]
+        self.events.append((name, fields))
 
 
 def make_item(item_id: str, score: float | None = None) -> ContentItem:
@@ -114,6 +124,71 @@ def test_fetch_items_uses_public_orchestrator_api(tmp_path: Path, monkeypatch) -
     assert result["fetched"] == 1
     assert result["raw_before_merge"] == 2
     assert service.run_store.load_items(result["run_id"], "raw")[0]["id"] == "item-1"
+    assert result["meta"]["status"] == "completed"
+    assert result["meta"]["current_stage"] == "raw"
+
+
+def test_trace_reporter_preserves_original_event_name(tmp_path: Path) -> None:
+    service = HorizonPipelineService(runs_root=tmp_path / "mcp-runs")
+    reporter = service.create_trace_reporter("run-trace-name")
+
+    reporter.event("source.RSS Feeds", status="running")
+
+    event = service.run_store.load_trace_events("run-trace-name", limit=1)[0]
+    assert event["name"] == "source.RSS Feeds"
+    assert event["stage"] == "fetch"
+    assert event["message"] == "Fetching from RSS Feeds"
+
+
+def test_fetch_items_records_cancelled_status(tmp_path: Path, monkeypatch) -> None:
+    service = HorizonPipelineService(runs_root=tmp_path / "mcp-runs")
+    config_path = tmp_path / "config.json"
+
+    monkeypatch.setattr(
+        service,
+        "_build_context",
+        lambda **kwargs: (
+            SimpleNamespace(
+                horizon_path=tmp_path,
+                config_path=config_path,
+                runtime=SimpleNamespace(),
+                config=SimpleNamespace(),
+            ),
+            ["rss"],
+            [],
+        ),
+    )
+    monkeypatch.setattr("src.mcp.service.make_storage", lambda runtime, config_path: object())
+
+    class SlowOrchestrator:
+        async def fetch_all_sources(self, since):  # type: ignore[no-untyped-def]
+            await asyncio.Event().wait()
+
+        def merge_cross_source_duplicates(self, items):  # type: ignore[no-untyped-def]
+            return items
+
+    monkeypatch.setattr(
+        "src.mcp.service.make_orchestrator",
+        lambda runtime, config, storage: SlowOrchestrator(),
+    )
+
+    async def scenario() -> None:
+        reporter = service.create_trace_reporter("run-cancel-fetch")
+        task = asyncio.create_task(
+            service.fetch_items(hours=6, run_id="run-cancel-fetch", trace_reporter=reporter)
+        )
+        await asyncio.sleep(0)
+        task.cancel()
+        with pytest.raises(asyncio.CancelledError):
+            await task
+
+    asyncio.run(scenario())
+
+    meta = service.run_store.load_meta("run-cancel-fetch")
+    events = service.run_store.load_trace_events("run-cancel-fetch", limit=10)
+    assert meta["status"] == "cancelled"
+    assert meta["current_stage"] == "fetch"
+    assert any(event["name"] == "fetch" and event["status"] == "cancelled" for event in events)
 
 
 def test_filter_items_uses_public_topic_dedup_api(tmp_path: Path, monkeypatch) -> None:
@@ -261,6 +336,93 @@ def test_score_items_limit_is_optional_and_recorded(tmp_path: Path, monkeypatch)
     assert len(service.run_store.load_items("run-score-limit", "scored")) == 2
 
 
+def test_score_items_passes_trace_reporter_when_supported(tmp_path: Path, monkeypatch) -> None:
+    service = HorizonPipelineService(runs_root=tmp_path / "mcp-runs")
+    service.run_store.create_run("run-score-trace")
+    item = make_item("item-1")
+    captured = {}
+    trace_reporter = CaptureTrace()
+
+    class FakeAnalyzer:
+        def __init__(
+            self,
+            ai_client,
+            personal_briefing_mode=False,
+            verbose_reporter=None,
+            run_instructions=None,
+        ):  # type: ignore[no-untyped-def]
+            captured["trace_reporter"] = verbose_reporter
+            captured["run_instructions"] = run_instructions
+
+        async def analyze_batch(self, batch):  # type: ignore[no-untyped-def]
+            for scored in batch:
+                scored.ai_score = 8.0
+            return batch
+
+    monkeypatch.setattr(
+        service,
+        "_load_stage_items",
+        lambda **kwargs: (
+            [item],
+            SimpleNamespace(
+                runtime=SimpleNamespace(
+                    create_ai_client=lambda ai: object(),
+                    ContentAnalyzer=FakeAnalyzer,
+                ),
+                config=SimpleNamespace(
+                    ai=SimpleNamespace(),
+                    filtering=SimpleNamespace(ai_score_threshold=7.0),
+                    personal_briefing=SimpleNamespace(enabled=False),
+                ),
+            ),
+        ),
+    )
+
+    result = asyncio.run(
+        service.score_items("run-score-trace", run_instructions="focus", trace_reporter=trace_reporter)
+    )
+
+    assert result["scored"] == 1
+    assert captured["trace_reporter"] is trace_reporter
+    assert captured["run_instructions"] == "focus"
+
+
+def test_score_items_skips_trace_reporter_when_constructor_omits_it(tmp_path: Path, monkeypatch) -> None:
+    service = HorizonPipelineService(runs_root=tmp_path / "mcp-runs")
+    service.run_store.create_run("run-score-no-trace-param")
+    item = make_item("item-1")
+
+    class FakeAnalyzer:
+        def __init__(self, ai_client, personal_briefing_mode=False):  # type: ignore[no-untyped-def]
+            self.ai_client = ai_client
+
+        async def analyze_batch(self, batch):  # type: ignore[no-untyped-def]
+            return batch
+
+    monkeypatch.setattr(
+        service,
+        "_load_stage_items",
+        lambda **kwargs: (
+            [item],
+            SimpleNamespace(
+                runtime=SimpleNamespace(
+                    create_ai_client=lambda ai: object(),
+                    ContentAnalyzer=FakeAnalyzer,
+                ),
+                config=SimpleNamespace(
+                    ai=SimpleNamespace(),
+                    filtering=SimpleNamespace(ai_score_threshold=7.0),
+                    personal_briefing=SimpleNamespace(enabled=False),
+                ),
+            ),
+        ),
+    )
+
+    result = asyncio.run(service.score_items("run-score-no-trace-param", trace_reporter=CaptureTrace()))
+
+    assert result["items_used"] == 1
+
+
 def test_score_items_without_limit_scores_all_items(tmp_path: Path, monkeypatch) -> None:
     service = HorizonPipelineService(runs_root=tmp_path / "mcp-runs")
     service.run_store.create_run("run-score-all")
@@ -339,6 +501,107 @@ def test_enrich_items_limit_controls_llm_stage(tmp_path: Path, monkeypatch) -> N
     assert result["citation_count"] == 2
     assert result["meta"]["enrichment_limit"] == 2
     assert len(service.run_store.load_items("run-enrich-limit", "enriched")) == 2
+
+
+def test_enrich_items_skips_empty_stage_without_llm(tmp_path: Path, monkeypatch) -> None:
+    service = HorizonPipelineService(runs_root=tmp_path / "mcp-runs")
+    service.run_store.create_run("run-enrich-empty")
+    trace_reporter = CaptureTrace()
+
+    class FakeRuntime:
+        ContentItem = ContentItem
+
+        def create_ai_client(self, ai):  # type: ignore[no-untyped-def]
+            raise AssertionError("enrichment should not call the LLM for an empty stage")
+
+    monkeypatch.setattr(
+        service,
+        "_load_stage_items",
+        lambda **kwargs: (
+            [],
+            SimpleNamespace(
+                runtime=FakeRuntime(),
+                config=SimpleNamespace(ai=SimpleNamespace()),
+            ),
+        ),
+    )
+
+    result = asyncio.run(service.enrich_items("run-enrich-empty", trace_reporter=trace_reporter))
+
+    assert result["enriched"] == 0
+    assert result["skipped"] is True
+    assert result["skip_reason"] == "empty_input"
+    assert service.run_store.load_items("run-enrich-empty", "enriched") == []
+    assert result["meta"]["enrichment_skipped_reason"] == "empty_input"
+    assert any(name == "enrich" and fields["status"] == "skipped" for name, fields in trace_reporter.events)
+
+
+def test_enrich_items_passes_trace_reporter_when_supported(tmp_path: Path, monkeypatch) -> None:
+    service = HorizonPipelineService(runs_root=tmp_path / "mcp-runs")
+    service.run_store.create_run("run-enrich-trace")
+    item = make_item("item-1", score=9.0)
+    captured = {}
+    trace_reporter = CaptureTrace()
+
+    class FakeEnricher:
+        def __init__(self, ai_client, verbose_reporter=None):  # type: ignore[no-untyped-def]
+            captured["trace_reporter"] = verbose_reporter
+
+        async def enrich_batch(self, batch):  # type: ignore[no-untyped-def]
+            for enriched in batch:
+                enriched.metadata["sources"] = [{"url": str(enriched.url), "title": enriched.title}]
+
+    monkeypatch.setattr(
+        service,
+        "_load_stage_items",
+        lambda **kwargs: (
+            [item],
+            SimpleNamespace(
+                runtime=SimpleNamespace(
+                    create_ai_client=lambda ai: object(),
+                    ContentEnricher=FakeEnricher,
+                ),
+                config=SimpleNamespace(ai=SimpleNamespace()),
+            ),
+        ),
+    )
+
+    result = asyncio.run(service.enrich_items("run-enrich-trace", trace_reporter=trace_reporter))
+
+    assert result["enriched"] == 1
+    assert captured["trace_reporter"] is trace_reporter
+
+
+def test_enrich_items_skips_trace_reporter_when_constructor_omits_it(tmp_path: Path, monkeypatch) -> None:
+    service = HorizonPipelineService(runs_root=tmp_path / "mcp-runs")
+    service.run_store.create_run("run-enrich-no-trace-param")
+    item = make_item("item-1", score=9.0)
+
+    class FakeEnricher:
+        def __init__(self, ai_client):  # type: ignore[no-untyped-def]
+            self.ai_client = ai_client
+
+        async def enrich_batch(self, batch):  # type: ignore[no-untyped-def]
+            return None
+
+    monkeypatch.setattr(
+        service,
+        "_load_stage_items",
+        lambda **kwargs: (
+            [item],
+            SimpleNamespace(
+                runtime=SimpleNamespace(
+                    create_ai_client=lambda ai: object(),
+                    ContentEnricher=FakeEnricher,
+                ),
+                config=SimpleNamespace(ai=SimpleNamespace()),
+            ),
+        ),
+    )
+
+    result = asyncio.run(service.enrich_items("run-enrich-no-trace-param", trace_reporter=CaptureTrace()))
+
+    assert result["items_used"] == 1
 
 
 def test_generate_summary_limit_controls_items_used(tmp_path: Path, monkeypatch) -> None:
@@ -472,3 +735,79 @@ def test_run_pipeline_passes_limits_to_llm_stages(tmp_path: Path, monkeypatch) -
     assert calls[3][1]["max_items"] == 1
     assert calls[4][0] == "summary"
     assert calls[4][1]["max_items"] is None
+
+
+def test_run_pipeline_completes_when_filter_keeps_no_items(tmp_path: Path, monkeypatch) -> None:
+    from src.ai.summarizer import DailySummarizer
+
+    service = HorizonPipelineService(runs_root=tmp_path / "mcp-runs")
+    run_id = "run-pipeline-empty-filter"
+
+    async def fake_fetch_items(**kwargs):  # type: ignore[no-untyped-def]
+        created = service.run_store.create_run(kwargs["run_id"])
+        service.run_store.save_items(created, "raw", item_payloads(make_item("low", score=None)))
+        service.run_store.update_meta(created, {"raw_count": 1, "status": "completed", "current_stage": "raw"})
+        return {"run_id": created, "fetched": 1}
+
+    async def fake_score_items(**kwargs):  # type: ignore[no-untyped-def]
+        item = make_item("low", score=1.0)
+        service.run_store.save_items(kwargs["run_id"], "scored", item_payloads(item))
+        service.run_store.update_meta(
+            kwargs["run_id"],
+            {
+                "scored_count": 1,
+                "scored_input_count": 1,
+                "scored_above_threshold": 0,
+                "status": "completed",
+                "current_stage": "scored",
+            },
+        )
+        return {"scored": 1, "above_threshold": 0}
+
+    async def fake_filter_items(**kwargs):  # type: ignore[no-untyped-def]
+        service.run_store.save_items(kwargs["run_id"], "filtered", [])
+        service.run_store.update_meta(
+            kwargs["run_id"],
+            {
+                "filtered_count": 0,
+                "filter_threshold": 7.0,
+                "status": "completed",
+                "current_stage": "filtered",
+            },
+        )
+        return {"kept": 0}
+
+    monkeypatch.setattr(service, "fetch_items", fake_fetch_items)
+    monkeypatch.setattr(service, "score_items", fake_score_items)
+    monkeypatch.setattr(service, "filter_items", fake_filter_items)
+    monkeypatch.setattr(
+        service,
+        "_build_context",
+        lambda **kwargs: (
+            SimpleNamespace(
+                horizon_path=tmp_path,
+                config_path=tmp_path / "config.json",
+                runtime=SimpleNamespace(
+                    ContentItem=ContentItem,
+                    DailySummarizer=DailySummarizer,
+                    create_ai_client=lambda ai: (_ for _ in ()).throw(
+                        AssertionError("empty filtered pipeline should not call enrichment LLM")
+                    ),
+                ),
+                config=SimpleNamespace(
+                    ai=SimpleNamespace(languages=["ru"]),
+                    personal_briefing=SimpleNamespace(enabled=False),
+                ),
+            ),
+            ["rss"],
+            [],
+        ),
+    )
+
+    result = asyncio.run(service.run_pipeline(run_id=run_id, languages=["ru"], enrich=True))
+
+    assert result["meta"]["status"] == "completed"
+    assert result["enrich"]["skipped"] is True
+    assert result["summaries"][0]["items_used"] == 0
+    assert service.run_store.load_items(run_id, "enriched") == []
+    assert "HZ_EMPTY_INPUT" not in service.run_store.load_summary(run_id, "ru")

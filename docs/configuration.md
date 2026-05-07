@@ -115,6 +115,24 @@ Use the [DashScope compatible-mode](https://help.aliyun.com/zh/dashscope/develop
 
 Use `provider: "codex_cli"` when you want Horizon to use a local `codex login` session instead of API keys. See [`docs/codex_cli_provider.md`](codex_cli_provider.md).
 
+**LM Studio**:
+
+Use the web dashboard's Basic Settings page and choose `LM Studio`, or configure it as an OpenAI-compatible local endpoint:
+
+```json
+{
+  "ai": {
+    "provider": "openai",
+    "model": "your-loaded-model",
+    "base_url": "http://127.0.0.1:1234/v1",
+    "api_key_env": null,
+    "throttle_sec": 0
+  }
+}
+```
+
+LM Studio must be running its local server, and `model` should match a loaded model name accepted by that server. Local loopback endpoints do not require storing an API key in `data/config.json`.
+
 ### AI throttling
 
 If your model has a strict per-minute request cap, you can slow the scorer down in `data/config.json`:

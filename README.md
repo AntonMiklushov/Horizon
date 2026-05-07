@@ -201,6 +201,11 @@ Start the local web dashboard:
 uv run horizon-web
 ```
 
+On Windows, after installing `uv` and preparing dependencies once with
+`uv sync --frozen`, double-click `start-horizon-web.cmd` from the repository
+root. The launcher starts the local dashboard at `http://127.0.0.1:8787/` and
+opens it in your default browser. It does not install or update dependencies.
+
 Start the MCP server:
 
 ```bash
