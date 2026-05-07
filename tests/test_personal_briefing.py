@@ -5,12 +5,14 @@ from datetime import datetime, timedelta, timezone
 import pytest
 
 from src.horizon_ext.personal import (
+    CorroborationGate,
     EvidenceChecker,
     PersonalBriefingRenderer,
     SourcePolicyClassifier,
     conservative_default_policy,
     load_source_policy,
     run_briefing_critic,
+    prefilter_personal_candidates,
 )
 from src.ai.prompts import PERSONAL_BRIEFING_ANALYSIS_USER
 from src.models import AIConfig, AIProvider, Config, ContentItem, FilteringConfig, SourceType, SourcesConfig
@@ -99,9 +101,9 @@ def test_policy_load_and_override(tmp_path):
         (mk_item("https://arxiv.org/abs/2605.00001"), "science_preprint", "arXiv", "not peer-reviewed"),
         (mk_item("https://github.com/org/repo/releases/tag/v1"), "tech_primary_source", "GitHub", ""),
         (mk_item("https://unknown.example/news"), "unclassified", None, ""),
-        (mk_item("https://reuters.com/world/test", source=SourceType.REDDIT), "blocked_as_fact_source", "Reddit", ""),
-        (mk_item("https://apnews.com/article/test", source=SourceType.HACKERNEWS), "blocked_as_fact_source", "Hacker News", ""),
-        (mk_item("https://github.com/org/repo/releases/tag/v1", source=SourceType.HACKERNEWS), "blocked_as_fact_source", "Hacker News", ""),
+        (mk_item("https://reuters.com/world/test", source=SourceType.REDDIT), "fact_layer", "Reuters", ""),
+        (mk_item("https://apnews.com/article/test", source=SourceType.HACKERNEWS), "fact_layer", "Associated Press", ""),
+        (mk_item("https://github.com/org/repo/releases/tag/v1", source=SourceType.HACKERNEWS), "tech_primary_source", "GitHub", ""),
         (mk_item("https://t.me/channel/1", source=SourceType.TELEGRAM), "blocked_as_fact_source", "Telegram", ""),
         (mk_item("https://x.com/openai/status/1", source=SourceType.TWITTER), "social_primary_statement_only", "Twitter/X", ""),
         (mk_item("https://github.com/org/repo/releases/tag/v1", source=SourceType.TWITTER), "social_primary_statement_only", "Twitter/X", ""),
@@ -122,7 +124,7 @@ def test_prefilter_social_and_blocked_rules(tmp_path):
     }
     (tmp_path / "p.json").write_text('{"allowed_social_primary_actors":["openai"]}', encoding="utf-8")
     o = mk_orchestrator(tmp_path, personal=personal)
-    blocked = mk_item("https://reuters.com/a", source=SourceType.REDDIT, title="blocked")
+    blocked = mk_item("https://reddit.com/r/news/comments/1", source=SourceType.REDDIT, title="blocked")
     unknown = mk_item("https://unknown.example/a", title="unknown")
     allowed_social = mk_item("https://x.com/openai/status/1", source=SourceType.TWITTER, author="@openai", title="allowed")
     disallowed_social = mk_item("https://x.com/random/status/1", source=SourceType.TWITTER, author="@random", title="disallowed")
@@ -136,6 +138,60 @@ def test_prefilter_social_and_blocked_rules(tmp_path):
     assert {x["item"] for x in excluded} == {"blocked", "unknown", "disallowed"}
     merged = o.merge_cross_source_duplicates(candidates)
     assert [i.title for i in merged] == ["allowed", "allowed-rss"]
+
+
+def test_discovery_link_uses_canonical_evidence_but_not_confirmation():
+    policy = conservative_default_policy()
+    classifier = SourcePolicyClassifier(policy)
+    telegram = mk_item(
+        "https://reuters.com/world/test",
+        source=SourceType.TELEGRAM,
+        author="channel",
+        title="telegram linked reuters",
+    )
+    telegram.metadata.update({"channel": "channel", "msg_url": "https://t.me/channel/1"})
+    telegram.metadata.update(classifier.classify(telegram))
+
+    candidates, excluded = prefilter_personal_candidates([telegram], policy)
+
+    assert candidates == [telegram]
+    assert excluded == []
+    assert telegram.metadata["source_role"] == "fact_layer"
+    assert telegram.metadata["discovery_source_type"] == "telegram"
+    assert telegram.metadata["discovery_url"] == "https://t.me/channel/1"
+    assert telegram.metadata["counts_as_independent_confirmation"] is False
+
+
+def test_discovery_post_without_trusted_external_url_is_excluded():
+    policy = conservative_default_policy()
+    classifier = SourcePolicyClassifier(policy)
+    telegram = mk_item("https://t.me/channel/1", source=SourceType.TELEGRAM, title="telegram only")
+    telegram.metadata.update({"channel": "channel"})
+    telegram.metadata.update(classifier.classify(telegram))
+
+    candidates, excluded = prefilter_personal_candidates([telegram], policy)
+
+    assert candidates == []
+    assert excluded[0]["reason"] == "discovery-only"
+    assert excluded[0]["discovery_source_type"] == "telegram"
+
+
+def test_sensitive_keyword_and_corroboration_downgrade():
+    checker = EvidenceChecker(time_window_hours=24)
+    item = mk_item("https://interfax.ru/a", title="Sanctions and war update")
+    item.metadata.update({
+        "source_role": "russian_institutional_frame",
+        "claim_type": "confirmed_fact",
+        "confidence": "high",
+    })
+
+    checker.audit_item(item)
+    CorroborationGate().apply([item])
+
+    assert item.metadata["sensitive_topic_auto"] is True
+    assert item.metadata["claim_type"] == "party_claim"
+    assert item.metadata["confidence"] == "medium"
+    assert item.metadata["corroboration"]["passed"] is False
 
 
 def test_evidence_checker_required_downgrades():
@@ -540,13 +596,13 @@ def test_local_personal_smoke_without_real_api(tmp_path, monkeypatch):
     o = mk_orchestrator(tmp_path, personal=personal, languages=["en", "zh"])
     reuters = mk_item("https://reuters.com/world/test", title="Reuters world")
     moscow = mk_item("https://mos.ru/news/test", title="Moscow official")
-    reddit = mk_item("https://reuters.com/world/test", source=SourceType.REDDIT, title="Reddit link")
+    reddit = mk_item("https://reuters.com/world/test-2", source=SourceType.REDDIT, title="Reddit link")
 
     async def _fetch(_since):
         return [reuters, moscow, reddit]
 
     async def _analyze(items):
-        assert [i.title for i in items] == ["Reuters world", "Moscow official"]
+        assert [i.title for i in items] == ["Reuters world", "Moscow official", "Reddit link"]
         for item in items:
             item.ai_score = 9
             item.metadata.update({
@@ -577,7 +633,7 @@ def test_local_personal_smoke_without_real_api(tmp_path, monkeypatch):
     text = summary_path.read_text(encoding="utf-8")
     assert "Reuters world" in text
     assert "Moscow official" in text
-    assert "Reddit link" not in text
+    assert "Reddit link" in text
     assert "## Мир" in text
     assert "## Москва" in text
     assert "fact_layer" in text

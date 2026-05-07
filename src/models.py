@@ -214,6 +214,31 @@ class PersonalBriefingCriticConfig(StrictModel):
     auto_revise_once: bool = True
 
 
+class CorroborationConfig(StrictModel):
+    enabled: bool = True
+    sensitive_requires_independent_confirmation: bool = True
+    min_independent_confirmations: int = Field(default=1, ge=0, le=5)
+    confirming_roles: List[str] = Field(
+        default_factory=lambda: [
+            "fact_layer",
+            "context_layer",
+            "science_primary_source",
+            "tech_primary_source",
+        ]
+    )
+
+
+class PersonalEnrichmentConfig(StrictModel):
+    disable_for_sensitive_topics: bool = True
+    filter_search_results_by_source_policy: bool = True
+
+
+class SelectionCapsConfig(StrictModel):
+    enabled: bool = True
+    max_items_per_source_role: Dict[str, int] = Field(default_factory=dict)
+    max_sensitive_statement_items: int = Field(default=2, ge=0, le=50)
+
+
 class PersonalBriefingConfig(StrictModel):
     enabled: bool = False
     generate_standard_summaries: bool = False
@@ -228,6 +253,9 @@ class PersonalBriefingConfig(StrictModel):
         default_factory=lambda: ["russia", "moscow", "world_economy", "tech_ai", "open_source", "big_tech", "science"]
     )
     critic_pass: PersonalBriefingCriticConfig = Field(default_factory=PersonalBriefingCriticConfig)
+    corroboration: CorroborationConfig = Field(default_factory=CorroborationConfig)
+    enrichment: PersonalEnrichmentConfig = Field(default_factory=PersonalEnrichmentConfig)
+    selection_caps: SelectionCapsConfig = Field(default_factory=SelectionCapsConfig)
 
 
 class RenderingConfig(StrictModel):

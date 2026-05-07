@@ -8,9 +8,46 @@ from pathlib import Path
 from typing import Any, Dict, List, Optional, Tuple
 from urllib.parse import urlparse
 
-from pydantic import BaseModel, Field
+from pydantic import BaseModel, ConfigDict, Field, field_validator
 
 from ..models import ContentItem
+
+
+DISCOVERY_ONLY_SOURCE_TYPES = {"telegram", "reddit", "hackernews"}
+CONFIRMING_SOURCE_ROLES = {
+    "fact_layer",
+    "context_layer",
+    "science_primary_source",
+    "tech_primary_source",
+}
+TRUSTED_EVIDENCE_ROLES = CONFIRMING_SOURCE_ROLES | {
+    "official_primary_source",
+    "russian_institutional_frame",
+    "science_preprint",
+    "science_source_finder",
+}
+ALLOWED_TOPICS = {
+    "russia",
+    "moscow",
+    "world_economy",
+    "tech_ai",
+    "open_source",
+    "big_tech",
+    "science",
+    "world",
+    "other",
+}
+
+SENSITIVE_TOPIC_RE = re.compile(
+    r"\b("
+    r"war|invasion|combat|missile|drone|attack|sanction|sanctions|election|protest|riot|"
+    r"arrest|detention|terror|terrorism|mobilization|security|coup|hostage|explosion|"
+    r"войн[а-я]*|вторжен[а-я]*|боев[а-я]*|ракет[а-я]*|дрон[а-я]*|атак[а-я]*|"
+    r"санкци[а-я]*|выбор[а-я]*|протест[а-я]*|митинг[а-я]*|арест[а-я]*|задержан[а-я]*|"
+    r"террор[а-я]*|теракт[а-я]*|мобилизаци[а-я]*|безопасност[а-я]*|переворот[а-я]*|заложник[а-я]*|взрыв[а-я]*"
+    r")\b",
+    re.IGNORECASE,
+)
 
 
 class ClaimType(str, Enum):
@@ -31,16 +68,83 @@ class CriticResult(BaseModel):
     required_edits: List[str] = Field(default_factory=list)
 
 
+class SourceRule(BaseModel):
+    model_config = ConfigDict(extra="ignore")
+
+    role: str = "unclassified"
+    tier: str = "unknown"
+    name: str = ""
+    can_confirm_fact: Optional[bool] = None
+    can_confirm_sensitive: Optional[bool] = None
+    counts_as_independent_confirmation: Optional[bool] = None
+    notes: str = ""
+
+    def __getitem__(self, key: str) -> Any:
+        return getattr(self, key)
+
+    def get(self, key: str, default: Any = None) -> Any:
+        return getattr(self, key, default)
+
+    @field_validator("role", "tier", "name", "notes", mode="before")
+    @classmethod
+    def _stringify(cls, value: Any) -> str:
+        return "" if value is None else str(value)
+
+
+class DiscoveryPolicy(BaseModel):
+    model_config = ConfigDict(extra="ignore")
+
+    discovery_source_types: List[str] = Field(default_factory=lambda: sorted(DISCOVERY_ONLY_SOURCE_TYPES))
+    allow_trusted_external_links: bool = True
+    exclude_discovery_only_without_trusted_link: bool = True
+    allowlisted_telegram_channels: List[str] = Field(default_factory=list)
+
+
+class CorroborationConfig(BaseModel):
+    model_config = ConfigDict(extra="ignore")
+
+    enabled: bool = True
+    sensitive_requires_independent_confirmation: bool = True
+    min_independent_confirmations: int = Field(default=1, ge=0, le=5)
+    confirming_roles: List[str] = Field(default_factory=lambda: sorted(CONFIRMING_SOURCE_ROLES))
+
+
+class PersonalEnrichmentConfig(BaseModel):
+    model_config = ConfigDict(extra="ignore")
+
+    disable_for_sensitive_topics: bool = True
+    filter_search_results_by_source_policy: bool = True
+
+
+class SelectionCapsConfig(BaseModel):
+    model_config = ConfigDict(extra="ignore")
+
+    enabled: bool = True
+    max_items_per_source_role: Dict[str, int] = Field(default_factory=dict)
+    max_sensitive_statement_items: int = 2
+
+
 class SourcePolicy(BaseModel):
+    model_config = ConfigDict(extra="ignore")
+
     default_language: str = "ru"
     timezone: str = "Europe/Paris"
-    source_domain_rules: Dict[str, Dict[str, str]] = Field(default_factory=dict)
+    source_domain_rules: Dict[str, SourceRule] = Field(default_factory=dict)
     allowed_social_primary_actors: List[str] = Field(default_factory=list)
+    discovery: DiscoveryPolicy = Field(default_factory=DiscoveryPolicy)
+
+    @field_validator("source_domain_rules", mode="before")
+    @classmethod
+    def _coerce_rules(cls, value: Any) -> Dict[str, Any]:
+        if not isinstance(value, dict):
+            return {}
+        return {str(domain).lower().replace("www.", ""): rule for domain, rule in value.items()}
 
 
 def conservative_default_policy() -> SourcePolicy:
     mapping = {
         "reuters.com": {"role": "fact_layer", "tier": "tier1", "name": "Reuters"},
+        "reutersagency.com": {"role": "fact_layer", "tier": "tier1", "name": "Reuters"},
         "apnews.com": {"role": "fact_layer", "tier": "tier1", "name": "Associated Press"},
         "ft.com": {"role": "context_layer", "tier": "tier1", "name": "Financial Times"},
         "economist.com": {"role": "context_layer", "tier": "tier1", "name": "The Economist"},
@@ -111,9 +215,57 @@ def load_source_policy(path: str) -> Tuple[SourcePolicy, str]:
             timezone=raw.get("timezone", "Europe/Paris"),
             source_domain_rules=merged_rules,
             allowed_social_primary_actors=raw.get("allowed_social_primary_actors", []),
+            discovery=raw.get("discovery", {}),
         ), ""
     except Exception as exc:
         return conservative_default_policy(), f"Invalid policy file {path}: {exc}. Using conservative defaults."
+
+
+def _domain(url: str) -> str:
+    return urlparse(str(url)).netloc.lower().replace("www.", "")
+
+
+def _discovery_url(item: ContentItem) -> str:
+    meta = item.metadata
+    return str(
+        meta.get("discovery_url")
+        or meta.get("msg_url")
+        or meta.get("discussion_url")
+        or item.url
+    )
+
+
+def _discovery_name(item: ContentItem) -> str:
+    meta = item.metadata
+    if meta.get("channel"):
+        return f"@{meta['channel']}"
+    if meta.get("subreddit"):
+        return f"r/{meta['subreddit']}"
+    return str(meta.get("source_name") or item.author or item.source_type.value)
+
+
+def _append_note(existing: str, note: str) -> str:
+    if not existing:
+        return note
+    if note in existing:
+        return existing
+    return f"{existing}; {note}"
+
+
+def _tracked_exclusion(item: ContentItem, reason: str) -> Dict[str, Any]:
+    meta = item.metadata
+    return {
+        "id": item.id,
+        "item": item.title,
+        "reason": reason,
+        "source_role": meta.get("source_role", "unclassified"),
+        "discovery_source_type": meta.get("discovery_source_type", item.source_type.value),
+        "discovery_source_name": meta.get("discovery_source_name") or _discovery_name(item),
+        "content_source_domain": meta.get("content_source_domain") or _domain(str(item.url)),
+        "canonical_url": str(item.url),
+        "discovery_url": meta.get("discovery_url") or _discovery_url(item),
+        "policy_decision": meta.get("policy_decision", ""),
+    }
 
 
 class SourcePolicyClassifier:
@@ -121,56 +273,143 @@ class SourcePolicyClassifier:
         self.policy = policy
 
     def classify(self, item: ContentItem) -> Dict[str, str]:
-        domain = urlparse(str(item.url)).netloc.lower().replace("www.", "")
+        canonical_url = str(item.url)
+        domain = _domain(canonical_url)
         source_type = item.source_type.value
-        rule = None
-        matches = [
-            (d, r)
-            for d, r in self.policy.source_domain_rules.items()
-            if domain == d or domain.endswith("." + d)
-        ]
-        if matches:
-            _, rule = max(matches, key=lambda match: len(match[0]))
+        discovery_url = _discovery_url(item)
+        discovery_domain = _domain(discovery_url)
+        is_discovery_source = source_type in {s.lower() for s in self.policy.discovery.discovery_source_types}
+        is_external_link = bool(discovery_domain and domain and discovery_domain != domain)
+        if is_discovery_source and domain and not _is_platform_domain(source_type, domain):
+            is_external_link = True
+        rule = self._rule_for_domain(domain)
 
-        role = "unclassified"
-        tier = "unknown"
-        notes = ""
-        if rule:
-            role = rule.get("role", role)
-            tier = rule.get("tier", tier)
-        if source_type == "reddit":
-            role, tier = "blocked_as_fact_source", "unknown"
-            out_name = "Reddit"
-        elif source_type == "hackernews":
-            role, tier = "blocked_as_fact_source", "unknown"
-            out_name = "Hacker News"
-        elif source_type == "telegram":
-            role, tier = "blocked_as_fact_source", "unknown"
-            out_name = "Telegram"
+        role = rule.role if rule else "unclassified"
+        tier = rule.tier if rule else "unknown"
+        notes = rule.notes if rule and rule.notes else ""
+        out_name = rule.name if rule and rule.name else None
+
+        discovery_role = "origin"
+        policy_decision = "allow"
+        if is_discovery_source:
+            discovery_role = "discovery_signal"
+            if is_external_link and self.policy.discovery.allow_trusted_external_links and role in TRUSTED_EVIDENCE_ROLES:
+                policy_decision = "allow_linked_evidence"
+            else:
+                role, tier = self._discovery_fallback_role(item, source_type)
+                out_name = self._discovery_source_name(source_type)
+                policy_decision = (
+                    "allowlisted_discovery_statement"
+                    if role in {"primary_statement", "unverified_report"}
+                    else "exclude_discovery_only"
+                )
         elif source_type == "twitter":
             role, tier = "social_primary_statement_only", "unknown"
             out_name = "Twitter/X"
-        elif "github.com" in domain and "/releases" in str(item.url):
+            policy_decision = "social_primary_statement_only"
+        elif "github.com" in domain and "/releases" in canonical_url:
             role, tier = "tech_primary_source", "tier2"
             out_name = "GitHub"
-        else:
-            out_name = (rule or {}).get("name")
+
         if role == "science_preprint":
-            notes = "not peer-reviewed"
+            notes = _append_note(notes, "not peer-reviewed")
         elif role == "science_source_finder":
-            notes = "requires verification with paper, journal, or institution"
+            notes = _append_note(notes, "requires verification with paper, journal, or institution")
+
+        can_confirm_fact, can_confirm_sensitive, independent = self._capabilities(role, is_discovery_source)
+        if role in {"blocked_as_fact_source", "unclassified"}:
+            policy_decision = "exclude_" + role
 
         out = {
             "source_role": role,
             "source_reliability_tier": tier,
             "source_policy_notes": notes,
             "discovery_source_type": source_type,
+            "discovery_source_name": _discovery_name(item),
+            "discovery_url": discovery_url,
+            "discovery_role": discovery_role,
             "content_source_domain": domain,
-            "source_role_reason": f"classified by source_type/domain: {source_type}/{domain}",
+            "can_confirm_fact": can_confirm_fact,
+            "can_confirm_sensitive": can_confirm_sensitive,
+            "counts_as_independent_confirmation": independent,
+            "policy_decision": policy_decision,
+            "source_role_reason": f"classified by discovery/canonical domain: {source_type}/{domain}",
         }
         if out_name:
             out["source_name"] = out_name
         return out
+
+    def _rule_for_domain(self, domain: str) -> Optional[SourceRule]:
+        matches = [
+            (d, r)
+            for d, r in self.policy.source_domain_rules.items()
+            if domain == d or domain.endswith("." + d)
+        ]
+        if not matches:
+            return None
+        _, rule = max(matches, key=lambda match: len(match[0]))
+        return rule
+
+    def _discovery_fallback_role(self, item: ContentItem, source_type: str) -> tuple[str, str]:
+        if source_type == "telegram":
+            channel = str(item.metadata.get("channel") or item.author or "").lower().lstrip("@")
+            allowed = {c.lower().lstrip("@") for c in self.policy.discovery.allowlisted_telegram_channels}
+            if channel and channel in allowed:
+                return "primary_statement", "unknown"
+        return "blocked_as_fact_source", "unknown"
+
+    @staticmethod
+    def _discovery_source_name(source_type: str) -> str:
+        return {
+            "reddit": "Reddit",
+            "hackernews": "Hacker News",
+            "telegram": "Telegram",
+        }.get(source_type, source_type)
+
+    @staticmethod
+    def _capabilities(role: str, is_discovery_source: bool) -> tuple[bool, bool, bool]:
+        can_confirm_fact = role in CONFIRMING_SOURCE_ROLES
+        can_confirm_sensitive = role == "fact_layer"
+        independent = can_confirm_fact and not is_discovery_source and role != "social_primary_statement_only"
+        return can_confirm_fact, can_confirm_sensitive, independent
+
+
+def _normalize_claim_type(value: Any) -> str:
+    allowed = {member.value for member in ClaimType}
+    normalized = str(value or ClaimType.ANALYSIS.value).strip().lower()
+    return normalized if normalized in allowed else ClaimType.ANALYSIS.value
+
+
+def _normalize_topic(value: Any) -> str:
+    normalized = str(value or "other").strip().lower()
+    return normalized if normalized in ALLOWED_TOPICS else "other"
+
+
+def _normalize_confidence(value: Any) -> str:
+    normalized = str(value or "medium").strip().lower()
+    return normalized if normalized in {"low", "medium", "high"} else "medium"
+
+
+def detect_sensitive_topic(item: ContentItem) -> bool:
+    meta = item.metadata
+    parts = [
+        item.title,
+        item.content or "",
+        item.ai_summary or "",
+        str(meta.get("summary") or ""),
+        str(meta.get("why_it_matters") or ""),
+        " ".join(str(x) for x in meta.get("confirmed_details", []) if isinstance(meta.get("confirmed_details"), list)),
+    ]
+    return bool(SENSITIVE_TOPIC_RE.search("\n".join(parts)))
+
+
+def _is_platform_domain(source_type: str, domain: str) -> bool:
+    platform_domains = {
+        "telegram": ("t.me", "telegram.org"),
+        "reddit": ("reddit.com",),
+        "hackernews": ("news.ycombinator.com",),
+    }
+    return any(domain == candidate or domain.endswith("." + candidate) for candidate in platform_domains.get(source_type, ()))
 
 
 class EvidenceChecker:
@@ -179,8 +418,9 @@ class EvidenceChecker:
 
     def audit_item(self, item: ContentItem) -> Dict[str, Any]:
         meta = item.metadata
-        claim_type = meta.get("claim_type", ClaimType.ANALYSIS.value)
-        confidence = meta.get("confidence", "medium")
+        claim_type = _normalize_claim_type(meta.get("claim_type", ClaimType.ANALYSIS.value))
+        confidence = _normalize_confidence(meta.get("confidence", "medium"))
+        meta["topic"] = _normalize_topic(meta.get("topic", "other"))
         conflicts: List[str] = []
         unsupported: List[str] = []
         missing: List[str] = []
@@ -234,7 +474,19 @@ class EvidenceChecker:
                 confidence = "low" if original_claim_type == ClaimType.CONFIRMED_FACT.value else ("medium" if confidence == "high" else confidence)
                 unsupported.append("social source downgraded to primary_statement")
 
-        sensitive = bool(meta.get("sensitive_topic", False))
+        sensitive_auto = detect_sensitive_topic(item)
+        meta["sensitive_topic_auto"] = sensitive_auto
+        sensitive = bool(meta.get("sensitive_topic", False)) or sensitive_auto
+        meta["sensitive_topic"] = sensitive
+
+        can_confirm_fact, can_confirm_sensitive, independent = SourcePolicyClassifier._capabilities(
+            role,
+            str(meta.get("discovery_role", "")) == "discovery_signal",
+        )
+        meta.setdefault("can_confirm_fact", can_confirm_fact)
+        meta.setdefault("can_confirm_sensitive", can_confirm_sensitive)
+        meta.setdefault("counts_as_independent_confirmation", independent)
+
         if sensitive and role == "russian_institutional_frame" and claim_type == ClaimType.CONFIRMED_FACT.value:
             claim_type = ClaimType.PARTY_CLAIM.value
             confidence = "medium" if confidence == "high" else confidence
@@ -270,11 +522,11 @@ class EvidenceChecker:
 def prefilter_personal_candidates(
     items: List[ContentItem],
     policy: Optional[SourcePolicy],
-) -> tuple[List[ContentItem], List[Dict[str, str]]]:
+) -> tuple[List[ContentItem], List[Dict[str, Any]]]:
     """Drop sources that personal mode must not send to LLM scoring."""
     allowed = {a.lower() for a in (policy.allowed_social_primary_actors if policy else [])}
     candidates: List[ContentItem] = []
-    excluded: List[Dict[str, str]] = []
+    excluded: List[Dict[str, Any]] = []
     for item in items:
         role = item.metadata.get("source_role", "unclassified")
         parsed = urlparse(str(item.url))
@@ -287,18 +539,26 @@ def prefilter_personal_candidates(
             str(meta.get("handle", "")).lower().lstrip("@"),
             url_handle,
         }
+        discovery_role = str(meta.get("discovery_role", ""))
+        has_trusted_link = role in TRUSTED_EVIDENCE_ROLES and role not in {"blocked_as_fact_source", "unclassified"}
         reason = None
         if role == "blocked_as_fact_source":
-            reason = "blocked source"
+            reason = "discovery-only" if discovery_role == "discovery_signal" else "blocked source"
         elif role == "unclassified":
             reason = "unclassified"
+        elif discovery_role == "discovery_signal" and not has_trusted_link:
+            reason = "discovery-only"
         elif role == "social_primary_statement_only" and handles.isdisjoint(allowed):
             reason = "social-only"
         elif role == "social_primary_statement_only":
             item.metadata["claim_type"] = "primary_statement"
+        elif role == "primary_statement":
+            item.metadata["claim_type"] = "primary_statement"
+        elif role == "unverified_report":
+            item.metadata["claim_type"] = "unverified_report"
 
         if reason:
-            excluded.append({"item": item.title, "reason": reason})
+            excluded.append(_tracked_exclusion(item, reason))
         else:
             candidates.append(item)
     return candidates, excluded
@@ -312,13 +572,14 @@ def select_personal_important_items(
     min_importance_priority_topics: float,
     require_dates: bool,
     priority_topics: set[str],
-) -> tuple[List[ContentItem], List[Dict[str, str]]]:
+) -> tuple[List[ContentItem], List[Dict[str, Any]]]:
     """Apply deterministic post-LLM evidence and threshold rules."""
     important: List[ContentItem] = []
-    excluded: List[Dict[str, str]] = []
+    excluded: List[Dict[str, Any]] = []
     for item in items:
         checker.audit_item(item)
-        topic = item.metadata.get("topic", "other")
+        topic = _normalize_topic(item.metadata.get("topic", "other"))
+        item.metadata["topic"] = topic
         threshold = min_importance_priority_topics if topic in priority_topics else min_importance
         reason = None
         if item.metadata.get("include") is False:
@@ -333,10 +594,206 @@ def select_personal_important_items(
             reason = "low significance"
 
         if reason:
-            excluded.append({"item": item.title, "reason": reason})
+            excluded.append(_tracked_exclusion(item, reason))
         else:
             important.append(item)
     return important, excluded
+
+
+class CorroborationGate:
+    def __init__(self, config: Any | None = None):
+        raw = config
+        if raw is None:
+            self.config = CorroborationConfig()
+        elif isinstance(raw, CorroborationConfig):
+            self.config = raw
+        elif hasattr(raw, "model_dump"):
+            self.config = CorroborationConfig.model_validate(raw.model_dump())
+        else:
+            self.config = CorroborationConfig.model_validate(raw)
+
+    def apply(self, items: List[ContentItem]) -> List[ContentItem]:
+        if not self.config.enabled:
+            return items
+        for item in items:
+            self.audit(item)
+        return items
+
+    def audit(self, item: ContentItem) -> Dict[str, Any]:
+        meta = item.metadata
+        role = str(meta.get("source_role", "unclassified"))
+        claim_type = _normalize_claim_type(meta.get("claim_type", ClaimType.ANALYSIS.value))
+        confidence = _normalize_confidence(meta.get("confidence", "medium"))
+        sensitive = bool(meta.get("sensitive_topic")) or bool(meta.get("sensitive_topic_auto"))
+        confirming = self._confirming_sources(item, sensitive=sensitive)
+        required = (
+            self.config.min_independent_confirmations
+            if sensitive and self.config.sensitive_requires_independent_confirmation
+            else 0
+        )
+        passed = len(confirming) >= required
+        notes: List[str] = []
+
+        if sensitive and role == "russian_institutional_frame" and claim_type == ClaimType.CONFIRMED_FACT.value and not passed:
+            claim_type = ClaimType.PARTY_CLAIM.value
+            confidence = "medium" if confidence == "high" else confidence
+            notes.append("sensitive russian institutional item lacks independent corroboration")
+        if sensitive and role == "official_primary_source" and claim_type == ClaimType.CONFIRMED_FACT.value and not passed:
+            claim_type = ClaimType.OFFICIAL_STATEMENT.value
+            confidence = "medium" if confidence == "high" else confidence
+            notes.append("sensitive official source lacks external confirmation")
+        if sensitive and claim_type == ClaimType.CONFIRMED_FACT.value and confidence == "high" and not passed:
+            confidence = "medium"
+            notes.append("high confidence downgraded pending independent corroboration")
+
+        meta["claim_type"] = claim_type
+        meta["confidence"] = confidence
+        meta["corroboration"] = {
+            "passed": passed,
+            "required_independent_confirmations": required,
+            "independent_confirmations": len(confirming),
+            "confirming_sources": confirming,
+            "notes": notes,
+        }
+        if notes:
+            unsupported = meta.setdefault("unsupported_claims", [])
+            if isinstance(unsupported, list):
+                unsupported.extend(note for note in notes if note not in unsupported)
+            meta["requires_deep_review"] = True
+        return meta
+
+    def _confirming_sources(self, item: ContentItem, *, sensitive: bool = False) -> List[Dict[str, Any]]:
+        sources: List[Dict[str, Any]] = []
+        primary = _source_confirmation_payload(item)
+        if self._counts(primary, sensitive=sensitive):
+            sources.append(primary)
+        for raw in item.metadata.get("supporting_sources", []):
+            if not isinstance(raw, dict):
+                continue
+            payload = _supporting_confirmation_payload(raw)
+            if self._counts(payload, sensitive=sensitive) and not _same_confirmation_source(payload, sources):
+                sources.append(payload)
+        return sources
+
+    def _counts(self, payload: Dict[str, Any], *, sensitive: bool) -> bool:
+        return bool(
+            payload.get("counts_as_independent_confirmation")
+            and payload.get("can_confirm_fact")
+            and (not sensitive or payload.get("can_confirm_sensitive"))
+            and payload.get("source_role") in set(self.config.confirming_roles)
+        )
+
+
+def _source_confirmation_payload(item: ContentItem) -> Dict[str, Any]:
+    meta = item.metadata
+    return {
+        "source_name": meta.get("source_name", item.source_type.value),
+        "source_url": str(meta.get("source_url") or item.url),
+        "source_role": meta.get("source_role", "unclassified"),
+        "content_source_domain": meta.get("content_source_domain") or _domain(str(item.url)),
+        "can_confirm_fact": bool(meta.get("can_confirm_fact")),
+        "can_confirm_sensitive": bool(meta.get("can_confirm_sensitive")),
+        "counts_as_independent_confirmation": bool(meta.get("counts_as_independent_confirmation")),
+    }
+
+
+def _supporting_confirmation_payload(raw: Dict[str, Any]) -> Dict[str, Any]:
+    role = str(raw.get("source_role", "unclassified"))
+    domain = str(raw.get("content_source_domain") or _domain(str(raw.get("source_url", ""))))
+    can_confirm_fact = raw.get("can_confirm_fact")
+    can_confirm_sensitive = raw.get("can_confirm_sensitive")
+    independent = raw.get("counts_as_independent_confirmation")
+    if can_confirm_fact is None:
+        can_confirm_fact = role in CONFIRMING_SOURCE_ROLES
+    if can_confirm_sensitive is None:
+        can_confirm_sensitive = role == "fact_layer"
+    if independent is None:
+        independent = bool(can_confirm_fact) and str(raw.get("discovery_role", "")) != "discovery_signal"
+    return {
+        "source_name": raw.get("source_name", "unknown"),
+        "source_url": raw.get("source_url", ""),
+        "source_role": role,
+        "content_source_domain": domain,
+        "can_confirm_fact": bool(can_confirm_fact),
+        "can_confirm_sensitive": bool(can_confirm_sensitive),
+        "counts_as_independent_confirmation": bool(independent),
+    }
+
+
+def _same_confirmation_source(payload: Dict[str, Any], existing: List[Dict[str, Any]]) -> bool:
+    domain = payload.get("content_source_domain")
+    url = payload.get("source_url")
+    return any(src.get("content_source_domain") == domain or src.get("source_url") == url for src in existing)
+
+
+def apply_personal_selection_caps(
+    items: List[ContentItem],
+    config: Any | None = None,
+) -> tuple[List[ContentItem], List[Dict[str, Any]]]:
+    caps = _coerce_selection_caps(config)
+    if not caps.enabled:
+        return items, []
+
+    kept: List[ContentItem] = []
+    excluded: List[Dict[str, Any]] = []
+    role_counts: Dict[str, int] = {}
+    sensitive_statement_count = 0
+    for item in items:
+        role = str(item.metadata.get("source_role", "unclassified"))
+        role_limit = caps.max_items_per_source_role.get(role)
+        if role_limit is not None and role_counts.get(role, 0) >= role_limit:
+            excluded.append(_tracked_exclusion(item, "source role cap"))
+            continue
+
+        is_sensitive_statement = (
+            bool(item.metadata.get("sensitive_topic"))
+            and item.metadata.get("claim_type") in {"party_claim", "official_statement"}
+        )
+        if is_sensitive_statement and sensitive_statement_count >= caps.max_sensitive_statement_items:
+            excluded.append(_tracked_exclusion(item, "sensitive statement cap"))
+            continue
+
+        role_counts[role] = role_counts.get(role, 0) + 1
+        if is_sensitive_statement:
+            sensitive_statement_count += 1
+        kept.append(item)
+    return kept, excluded
+
+
+def _coerce_selection_caps(config: Any | None) -> SelectionCapsConfig:
+    if config is None:
+        return SelectionCapsConfig()
+    if isinstance(config, SelectionCapsConfig):
+        return config
+    if hasattr(config, "model_dump"):
+        return SelectionCapsConfig.model_validate(config.model_dump())
+    return SelectionCapsConfig.model_validate(config)
+
+
+def source_policy_decisions(items: List[ContentItem], excluded: List[Dict[str, Any]] | None = None) -> Dict[str, Any]:
+    return {
+        "items": [
+            {
+                "id": item.id,
+                "title": item.title,
+                "canonical_url": str(item.url),
+                "source_role": item.metadata.get("source_role"),
+                "discovery_source_type": item.metadata.get("discovery_source_type"),
+                "discovery_source_name": item.metadata.get("discovery_source_name"),
+                "discovery_url": item.metadata.get("discovery_url"),
+                "content_source_domain": item.metadata.get("content_source_domain"),
+                "can_confirm_fact": item.metadata.get("can_confirm_fact"),
+                "can_confirm_sensitive": item.metadata.get("can_confirm_sensitive"),
+                "counts_as_independent_confirmation": item.metadata.get("counts_as_independent_confirmation"),
+                "policy_decision": item.metadata.get("policy_decision"),
+                "corroboration": item.metadata.get("corroboration"),
+                "sensitive_topic_auto": item.metadata.get("sensitive_topic_auto"),
+                "enrichment_skipped": item.metadata.get("enrichment_skipped"),
+            }
+            for item in items
+        ],
+        "excluded": list(excluded or []),
+    }
 
 
 def drop_items_flagged_by_critic(items: List[ContentItem], critic: CriticResult) -> List[ContentItem]:

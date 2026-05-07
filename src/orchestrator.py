@@ -10,7 +10,7 @@ import httpx
 from pydantic import ValidationError
 
 from .console import make_console
-from .models import Config, ContentItem
+from .models import Config, ContentItem, SourceType
 from .storage.manager import StorageManager
 from .services.email import EmailManager
 from .services.webhook import WebhookNotifier
@@ -25,6 +25,8 @@ from .ai.analyzer import ContentAnalyzer
 from .ai.summarizer import DailySummarizer
 from .ai.enricher import ContentEnricher
 from .horizon_ext.personal import (
+    apply_personal_selection_caps,
+    CorroborationGate,
     drop_items_flagged_by_critic,
     EvidenceChecker,
     PersonalBriefingRenderer,
@@ -33,6 +35,7 @@ from .horizon_ext.personal import (
     prefilter_personal_candidates,
     run_briefing_critic,
     select_personal_important_items,
+    source_policy_decisions,
 )
 from .ai.schemas import TopicDedupResult
 from .ai.tokens import get_usage_snapshot
@@ -291,6 +294,13 @@ class HorizonOrchestrator:
                     excluded=len(retracked),
                     excluded_reasons=self._reason_counts(retracked),
                 )
+                gate_timer = self.verbose_reporter.start("personal.corroboration", input_items=len(important_items))
+                CorroborationGate(self.config.personal_briefing.corroboration).apply(important_items)
+                self.verbose_reporter.end(
+                    "personal.corroboration",
+                    gate_timer,
+                    passed=sum(1 for item in important_items if item.metadata.get("corroboration", {}).get("passed")),
+                )
 
             # 5.6 Optional second-stage Twitter reply expansion + targeted re-analysis
             if not self.config.personal_briefing.enabled:
@@ -327,6 +337,19 @@ class HorizonOrchestrator:
                 excluded=len(diversity_excluded),
                 max_per_source=self.config.filtering.max_items_per_source,
             )
+            if self.config.personal_briefing.enabled:
+                caps_timer = self.verbose_reporter.start("selection.personal_caps", input_items=len(important_items))
+                important_items, cap_excluded = apply_personal_selection_caps(
+                    important_items,
+                    self.config.personal_briefing.selection_caps,
+                )
+                tracked_excluded.extend(cap_excluded)
+                self.verbose_reporter.end(
+                    "selection.personal_caps",
+                    caps_timer,
+                    kept=len(important_items),
+                    excluded=len(cap_excluded),
+                )
 
             # Show per-sub-source selection breakdown
             selected_counts: Dict[str, int] = defaultdict(int)
@@ -341,6 +364,8 @@ class HorizonOrchestrator:
             enrichment_timer = self.verbose_reporter.start("llm.enrichment", input_items=len(important_items))
             await self._enrich_important_items(important_items)
             self.verbose_reporter.end("llm.enrichment", enrichment_timer, output_items=len(important_items))
+            if self.config.personal_briefing.enabled:
+                self._save_source_policy_decisions(today=None, items=important_items, excluded=tracked_excluded)
 
             # 7. Generate and save daily summaries
             summary_timer = self.verbose_reporter.start("summaries")
@@ -719,6 +744,24 @@ class HorizonOrchestrator:
             return f"Сводка - {date}"
         return f"Horizon Brief Summary: {date} ({language.upper()})"
 
+    def _save_source_policy_decisions(
+        self,
+        *,
+        today: str | None,
+        items: List[ContentItem],
+        excluded: List[Dict[str, Any]],
+    ) -> None:
+        try:
+            date = today or datetime.now(timezone.utc).strftime("%Y-%m-%d")
+            path = self.storage.summaries_dir / f"source_policy_decisions-{date}.json"
+            payload = source_policy_decisions(items, excluded)
+            import json
+
+            path.write_text(json.dumps(payload, ensure_ascii=False, indent=2) + "\n", encoding="utf-8")
+            self.verbose_reporter.event("personal.source_policy_decisions", artifact=str(path), items=len(items), excluded=len(excluded))
+        except Exception as exc:
+            self.verbose_reporter.event("personal.source_policy_decisions", status="failed", error=type(exc).__name__)
+
     def _publish_jekyll_post(self, date: str, language: str, content: str):
         posts_dir = self.storage.resolve_runtime_path(self.config.publishing.docs_dir) / "_posts"
         posts_dir.mkdir(parents=True, exist_ok=True)
@@ -765,14 +808,26 @@ class HorizonOrchestrator:
                         primary.metadata[mk] = mv
 
                 if item is not primary:
-                    supporting.append({
+                    support = {
                         "source_name": item.metadata.get("source_name", item.source_type.value),
                         "source_url": str(item.url),
                         "source_role": item.metadata.get("source_role", "unclassified"),
                         "source_reliability_tier": item.metadata.get("source_reliability_tier", "unknown"),
                         "publication_date": item.metadata.get("publication_date"),
                         "title": item.title,
-                    })
+                    }
+                    for key in (
+                        "content_source_domain",
+                        "discovery_source_type",
+                        "discovery_source_name",
+                        "discovery_role",
+                        "can_confirm_fact",
+                        "can_confirm_sensitive",
+                        "counts_as_independent_confirmation",
+                    ):
+                        if item.metadata.get(key) is not None:
+                            support[key] = item.metadata.get(key)
+                    supporting.append(support)
 
                 # Append content (e.g., comments from another source)
                 if item is not primary and item.content:
@@ -867,14 +922,26 @@ class HorizonOrchestrator:
                     continue
                 dup = items[dup_idx]
                 primary.metadata.setdefault("supporting_sources", [])
-                primary.metadata["supporting_sources"].append({
+                support = {
                     "source_name": dup.metadata.get("source_name", dup.source_type.value),
                     "source_url": str(dup.url),
                     "source_role": dup.metadata.get("source_role", "unclassified"),
                     "source_reliability_tier": dup.metadata.get("source_reliability_tier", "unknown"),
                     "publication_date": dup.metadata.get("publication_date"),
                     "title": dup.title,
-                })
+                }
+                for key in (
+                    "content_source_domain",
+                    "discovery_source_type",
+                    "discovery_source_name",
+                    "discovery_role",
+                    "can_confirm_fact",
+                    "can_confirm_sensitive",
+                    "counts_as_independent_confirmation",
+                ):
+                    if dup.metadata.get(key) is not None:
+                        support[key] = dup.metadata.get(key)
+                primary.metadata["supporting_sources"].append(support)
                 # Merge comments/content from the duplicate into the primary
                 if dup.content:
                     if not primary.content or dup.content not in primary.content:
@@ -971,10 +1038,45 @@ class HorizonOrchestrator:
             return
 
         self.console.print("📚 Enriching with background knowledge...")
+        enrichment_items = items
+        search_result_filter = None
+        if self.config.personal_briefing.enabled:
+            enrichment_cfg = self.config.personal_briefing.enrichment
+            if enrichment_cfg.disable_for_sensitive_topics:
+                enrichment_items = []
+                for item in items:
+                    if item.metadata.get("sensitive_topic") or item.metadata.get("sensitive_topic_auto"):
+                        item.metadata["enrichment_skipped"] = "sensitive topic"
+                    else:
+                        enrichment_items.append(item)
+            if enrichment_cfg.filter_search_results_by_source_policy and self.personal_classifier:
+                search_result_filter = self._personal_search_result_allowed
+
+        if not enrichment_items:
+            self.console.print("   Enrichment skipped for selected personal items\n")
+            return
+
         ai_client = create_ai_client(self.config.ai)
-        enricher = ContentEnricher(ai_client, verbose_reporter=self.verbose_reporter)
-        await enricher.enrich_batch(items)
-        self.console.print(f"   Enriched {len(items)} items\n")
+        enricher = ContentEnricher(
+            ai_client,
+            verbose_reporter=self.verbose_reporter,
+            search_result_filter=search_result_filter,
+        )
+        await enricher.enrich_batch(enrichment_items)
+        self.console.print(f"   Enriched {len(enrichment_items)} items\n")
+
+    def _personal_search_result_allowed(self, result: dict) -> bool:
+        if not self.personal_classifier:
+            return True
+        url = str(result.get("url") or "")
+        if not url:
+            return False
+        try:
+            item = ContentItem(id="search-result", source_type=SourceType.RSS, title=str(result.get("title") or url), url=url)
+        except Exception:
+            return False
+        classified = self.personal_classifier.classify(item)
+        return classified.get("source_role") in {"fact_layer", "context_layer", "science_primary_source", "tech_primary_source", "official_primary_source"}
 
     async def _analyze_content(self, items: List[ContentItem]) -> List[ContentItem]:
         """Analyze content items with AI.

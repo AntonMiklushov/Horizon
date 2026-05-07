@@ -157,6 +157,7 @@ class HackerNewsScraper(BaseScraper):
                 "descendants": story.get("descendants", 0),
                 "type": story.get("type", "story"),
                 "discussion_url": hn_discussion_url,
+                "discovery_url": hn_discussion_url,
                 "comment_count": len(comments),
             }
         )

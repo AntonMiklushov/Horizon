@@ -203,6 +203,7 @@ class RedditScraper(BaseScraper):
                 "is_self": is_self,
                 "flair": post.get("link_flair_text"),
                 "discussion_url": discussion_url,
+                "discovery_url": discussion_url,
             },
         )
 

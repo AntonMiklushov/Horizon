@@ -111,6 +111,45 @@ def apply_source_settings(config: Config, form: Any) -> Config:
     return _validated(clone)
 
 
+def apply_policy_settings(config: Config, form: Any) -> Config:
+    """Apply personal briefing policy controls from the compact policy page."""
+
+    clone = config.model_copy(deep=True)
+    personal = clone.personal_briefing
+    personal.enabled = _checked(form, "personal_enabled")
+    personal.source_policy_file = _str(form, "source_policy_file") or personal.source_policy_file
+    personal.corroboration.enabled = _checked(form, "corroboration_enabled")
+    personal.corroboration.sensitive_requires_independent_confirmation = _checked(
+        form,
+        "sensitive_requires_confirmation",
+    )
+    personal.corroboration.min_independent_confirmations = _int(
+        form,
+        "min_independent_confirmations",
+        1,
+        minimum=0,
+        maximum=5,
+    )
+    personal.enrichment.disable_for_sensitive_topics = _checked(form, "disable_sensitive_enrichment")
+    personal.enrichment.filter_search_results_by_source_policy = _checked(form, "filter_enrichment_results")
+    personal.selection_caps.enabled = _checked(form, "selection_caps_enabled")
+    personal.selection_caps.max_sensitive_statement_items = _int(
+        form,
+        "max_sensitive_statement_items",
+        2,
+        minimum=0,
+        maximum=50,
+    )
+
+    preset = _str(form, "policy_preset")
+    if preset == "personal-media":
+        personal.source_policy_file = "data/source-policy.personal-media.example.json"
+    elif preset == "personal-news":
+        personal.source_policy_file = "data/config.personal-news.example.json"
+
+    return _validated(clone)
+
+
 def _github_sources(form: Any) -> list[GitHubSourceConfig]:
     sources = []
     for index in range(_int(form, "github_count", 0, minimum=0, maximum=500)):

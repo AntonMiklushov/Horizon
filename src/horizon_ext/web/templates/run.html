@@ -167,6 +167,26 @@
     {% if personal_prefilter_note %}
       <div class="notice" data-testid="personal-prefilter-run-note">{{ personal_prefilter_note }}</div>
     {% endif %}
+    {% if personal_prefilter_exclusions %}
+      <div class="notice" data-testid="personal-prefilter-exclusions">
+        <strong>Prefilter exclusions:</strong>
+        <ul>
+          {% for entry in personal_prefilter_exclusions[:6] %}
+            <li>
+              {{ entry.item or entry.id }}:
+              {{ entry.reason or "excluded" }}
+              {% if entry.discovery_source_type %}| discovery {{ entry.discovery_source_type }}{% endif %}
+              {% if entry.content_source_domain %}| canonical {{ entry.content_source_domain }}{% endif %}
+              {% if entry.source_role %}| role {{ entry.source_role }}{% endif %}
+              {% if entry.policy_decision %}| {{ entry.policy_decision }}{% endif %}
+            </li>
+          {% endfor %}
+        </ul>
+      </div>
+    {% endif %}
+    {% if source_policy_decisions %}
+      <p class="muted" data-testid="source-policy-decisions">Source policy decisions: {{ source_policy_decisions["items"] | length }} items, {{ source_policy_decisions["excluded"] | length }} exclusions.</p>
+    {% endif %}
     {% if meta.run_instructions %}<p><strong>Instructions:</strong> {{ meta.run_instructions }}</p>{% endif %}
   {% endif %}
   <div>

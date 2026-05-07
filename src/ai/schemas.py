@@ -7,6 +7,29 @@ from typing import Any, Literal
 from pydantic import BaseModel, ConfigDict, Field, field_validator
 
 
+ALLOWED_PERSONAL_TOPICS = {
+    "russia",
+    "moscow",
+    "world_economy",
+    "tech_ai",
+    "open_source",
+    "big_tech",
+    "science",
+    "world",
+    "other",
+}
+ALLOWED_CLAIM_TYPES = {
+    "confirmed_fact",
+    "official_statement",
+    "party_claim",
+    "analysis",
+    "market_reaction",
+    "unverified_report",
+    "correction_or_update",
+    "primary_statement",
+}
+
+
 class _ModelPayload(BaseModel):
     model_config = ConfigDict(extra="ignore")
 
@@ -43,6 +66,18 @@ class PersonalAnalysisResult(_ModelPayload):
     noise_penalty: float = Field(default=0, ge=0)
     weak_evidence_penalty: float = Field(default=0, ge=0)
     reason: str = ""
+
+    @field_validator("topic", mode="before")
+    @classmethod
+    def _normalize_topic(cls, value: Any) -> str:
+        normalized = str(value or "other").strip().lower()
+        return normalized if normalized in ALLOWED_PERSONAL_TOPICS else "other"
+
+    @field_validator("claim_type", mode="before")
+    @classmethod
+    def _normalize_claim_type(cls, value: Any) -> str:
+        normalized = str(value or "analysis").strip().lower()
+        return normalized if normalized in ALLOWED_CLAIM_TYPES else "analysis"
 
 
 class PersonalAnalysisResultWithId(PersonalAnalysisResult):

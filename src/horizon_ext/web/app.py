@@ -30,6 +30,7 @@ from ...storage.manager import StorageManager
 from .config_forms import (
     ConfigFormError,
     apply_basic_settings,
+    apply_policy_settings,
     apply_source_settings,
     source_summary,
     web_default_hours,
@@ -156,6 +157,8 @@ def create_app(
             items=items,
             run_failure_diagnostic=_run_failure_diagnostic(trace_events, run_state),
             personal_prefilter_note=_personal_prefilter_note(meta),
+            personal_prefilter_exclusions=_personal_prefilter_exclusions(meta),
+            source_policy_decisions=_source_policy_decisions(request.app.state.service, run_id),
         )
 
     @app.get("/api/runs/{run_id}")
@@ -272,6 +275,57 @@ def create_app(
                 source_counts=source_summary(config),
                 error=str(exc),
                 saved=False,
+                status_code=400,
+            )
+
+    @app.get("/settings/policy", response_class=HTMLResponse)
+    async def policy_settings(request: Request) -> HTMLResponse:
+        config, error = _load_config(request)
+        return _render(
+            request,
+            "settings_policy.html",
+            config=config,
+            config_error=error,
+            error=None,
+            saved=False,
+            policy_preset=_policy_preset(config),
+        )
+
+    @app.post("/settings/policy", response_class=HTMLResponse)
+    async def save_policy_settings(request: Request) -> HTMLResponse:
+        form = await request.form()
+        config, load_error = _load_config(request)
+        if config is None:
+            return _render(
+                request,
+                "settings_policy.html",
+                config=None,
+                config_error=load_error,
+                error=load_error,
+                saved=False,
+                policy_preset="custom",
+            )
+        try:
+            updated = apply_policy_settings(config, form)
+            _save_web_config(request.app, updated)
+            return _render(
+                request,
+                "settings_policy.html",
+                config=updated,
+                config_error=None,
+                error=None,
+                saved=True,
+                policy_preset=_policy_preset(updated),
+            )
+        except (ConfigFormError, ValidationError, OSError) as exc:
+            return _render(
+                request,
+                "settings_policy.html",
+                config=config,
+                config_error=None,
+                error=str(exc),
+                saved=False,
+                policy_preset=_policy_preset(config),
                 status_code=400,
             )
 
@@ -659,6 +713,17 @@ def _personal_prefilter_enabled(config: Any | None) -> bool:
     return bool(getattr(personal, "enabled", False))
 
 
+def _policy_preset(config: Any | None) -> str:
+    personal = getattr(config, "personal_briefing", None)
+    path = str(getattr(personal, "source_policy_file", "") or "")
+    normalized = path.replace("\\", "/")
+    if normalized.endswith("source-policy.personal-media.example.json"):
+        return "personal-media"
+    if normalized.endswith("config.personal-news.example.json"):
+        return "personal-news"
+    return "custom"
+
+
 def _personal_prefilter_note(meta: dict[str, Any] | None) -> str | None:
     if not meta:
         return None
@@ -674,6 +739,21 @@ def _personal_prefilter_note(meta: dict[str, Any] | None) -> str | None:
     if excluded:
         return f"Personal briefing prefilter kept {raw_after} of {raw_before} fetched items before scoring."
     return None
+
+
+def _personal_prefilter_exclusions(meta: dict[str, Any] | None) -> list[dict[str, Any]]:
+    if not meta:
+        return []
+    excluded = meta.get("personal_prefilter_excluded") or meta.get("personal_filter_excluded") or []
+    return excluded if isinstance(excluded, list) else []
+
+
+def _source_policy_decisions(service: HorizonPipelineService, run_id: str) -> dict[str, Any] | None:
+    try:
+        payload = service.run_store.read_json(run_id, "source_policy_decisions.json")
+    except Exception:
+        return None
+    return payload if isinstance(payload, dict) else None
 
 
 def _render(request: Request, template_name: str, status_code: int = 200, **context: Any) -> HTMLResponse:
