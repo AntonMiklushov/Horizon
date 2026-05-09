@@ -173,6 +173,13 @@
       "enabled": true,
       "auto_revise_once": true
     },
+    "corroboration": {
+      "enabled": true,
+      "sensitive_requires_independent_confirmation": true,
+      "high_confidence_requires_supporting_source": true,
+      "min_independent_confirmations": 1,
+      "confirming_roles": ["fact_layer", "context_layer", "science_primary_source", "tech_primary_source"]
+    },
     "generate_standard_summaries": false
   },
   "rendering": {

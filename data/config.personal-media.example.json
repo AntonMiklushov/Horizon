@@ -1,0 +1,114 @@
+{
+  "version": "1.0",
+  "ai": {
+    "provider": "openai",
+    "model": "gpt-4",
+    "api_key_env": "OPENAI_API_KEY",
+    "temperature": 0.2,
+    "max_tokens": 4096,
+    "languages": ["ru"]
+  },
+  "sources": {
+    "github": [],
+    "hackernews": {
+      "enabled": true,
+      "fetch_top_stories": 20,
+      "min_score": 100,
+      "story_lists": ["top", "best"],
+      "include_jobs": false
+    },
+    "rss": [
+      {
+        "name": "Reuters World",
+        "url": "https://www.reutersagency.com/feed/?best-topics=world&post_type=best",
+        "enabled": true,
+        "category": "world"
+      },
+      {
+        "name": "AP Top News",
+        "url": "https://apnews.com/hub/ap-top-news?output=rss",
+        "enabled": true,
+        "category": "world"
+      }
+    ],
+    "reddit": {
+      "enabled": false,
+      "subreddits": [],
+      "users": [],
+      "fetch_comments": 0
+    },
+    "telegram": {
+      "enabled": false,
+      "channels": []
+    },
+    "twitter": {
+      "enabled": false,
+      "users": [],
+      "fetch_limit": 10,
+      "fetch_reply_text": false
+    }
+  },
+  "filtering": {
+    "ai_score_threshold": 7.0,
+    "time_window_hours": 24,
+    "max_items_per_source": 5
+  },
+  "webhook": {
+    "enabled": false,
+    "url_env": "HORIZON_WEBHOOK_URL",
+    "delivery": "summary",
+    "overview_position": "first",
+    "platform": "generic",
+    "layout": "markdown",
+    "fallback_layout": "markdown"
+  },
+  "personal_briefing": {
+    "enabled": true,
+    "generate_standard_summaries": false,
+    "language": "ru",
+    "timezone": "Europe/Paris",
+    "daily_empty_allowed": true,
+    "min_importance": 7.0,
+    "min_importance_priority_topics": 6.5,
+    "require_dates": true,
+    "source_policy_file": "data/source-policy.personal-media.example.json",
+    "priority_topics": ["russia", "moscow", "world_economy", "tech_ai", "open_source", "big_tech", "science"],
+    "critic_pass": {
+      "enabled": true,
+      "auto_revise_once": true
+    },
+    "corroboration": {
+      "enabled": true,
+      "sensitive_requires_independent_confirmation": true,
+      "high_confidence_requires_supporting_source": true,
+      "min_independent_confirmations": 1,
+      "confirming_roles": ["fact_layer", "context_layer", "science_primary_source", "tech_primary_source"]
+    },
+    "enrichment": {
+      "disable_for_sensitive_topics": true,
+      "filter_search_results_by_source_policy": true
+    },
+    "selection_caps": {
+      "enabled": true,
+      "max_items_per_source_role": {
+        "russian_institutional_frame": 2,
+        "official_primary_source": 2,
+        "primary_statement": 2
+      },
+      "max_sensitive_statement_items": 2
+    }
+  },
+  "rendering": {
+    "template_dir": null,
+    "output_formats": ["markdown", "html"],
+    "inline_email_css": true
+  },
+  "publishing": {
+    "enabled": false,
+    "docs_dir": "docs",
+    "site_base_url": null
+  },
+  "notes": {
+    "personal_media": "Discovery platforms are not fact confirmation sources. Canonical external links are evaluated by source policy."
+  }
+}

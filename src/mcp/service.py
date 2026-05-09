@@ -29,9 +29,12 @@ from .run_store import RunStore
 from ..services.webhook import WebhookNotifier
 from ..models import AIProvider
 from ..horizon_ext.personal import (
+    apply_personal_selection_caps,
+    CorroborationGate,
     drop_items_flagged_by_critic,
     EvidenceChecker,
     select_personal_important_items,
+    source_policy_decisions,
 )
 from ..horizon_ext.mcp import local_only_config, normalize_run_instructions, redact_runtime_payload
 from ..horizon_ext.pipeline import apply_source_diversity
@@ -496,6 +499,12 @@ class HorizonPipelineService:
             orchestrator._classify_personal_source_metadata(raw_items)
             candidate_items, personal_excluded = orchestrator._prefilter_personal_candidates(raw_items)
         merged_items = orchestrator.merge_cross_source_duplicates(candidate_items)
+        if self._personal_briefing_enabled(ctx.config):
+            self.run_store.write_json(
+                run_id,
+                "source_policy_decisions.json",
+                source_policy_decisions(merged_items, personal_excluded),
+            )
 
         self.run_store.save_items(run_id, "raw", items_to_dicts(merged_items))
         meta = self.run_store.update_meta(
@@ -664,7 +673,10 @@ class HorizonPipelineService:
             orchestrator._classify_personal_source_metadata(items)
             important_items, personal_excluded = select_personal_important_items(
                 items,
-                checker=EvidenceChecker(ctx.config.filtering.time_window_hours),
+                checker=EvidenceChecker(
+                    ctx.config.filtering.time_window_hours,
+                    high_confidence_requires_supporting_source=self._high_confidence_requires_supporting_source(ctx.config),
+                ),
                 min_importance=ctx.config.personal_briefing.min_importance,
                 min_importance_priority_topics=ctx.config.personal_briefing.min_importance_priority_topics,
                 require_dates=ctx.config.personal_briefing.require_dates,
@@ -683,7 +695,10 @@ class HorizonPipelineService:
             if self._personal_briefing_enabled(ctx.config):
                 important_items, retracked = select_personal_important_items(
                     important_items,
-                    checker=EvidenceChecker(ctx.config.filtering.time_window_hours),
+                    checker=EvidenceChecker(
+                        ctx.config.filtering.time_window_hours,
+                        high_confidence_requires_supporting_source=self._high_confidence_requires_supporting_source(ctx.config),
+                    ),
                     min_importance=ctx.config.personal_briefing.min_importance,
                     min_importance_priority_topics=ctx.config.personal_briefing.min_importance_priority_topics,
                     require_dates=ctx.config.personal_briefing.require_dates,
@@ -692,11 +707,27 @@ class HorizonPipelineService:
                 personal_excluded.extend(retracked)
         after_topic_dedup = len(important_items)
 
+        if self._personal_briefing_enabled(ctx.config):
+            CorroborationGate(getattr(ctx.config.personal_briefing, "corroboration", None)).apply(important_items)
+
         important_items, diversity_excluded = apply_source_diversity(
             important_items,
             max_items_per_source=ctx.config.filtering.max_items_per_source,
         )
         personal_excluded.extend(diversity_excluded)
+        if self._personal_briefing_enabled(ctx.config):
+            important_items, cap_excluded = apply_personal_selection_caps(
+                important_items,
+                getattr(ctx.config.personal_briefing, "selection_caps", None),
+            )
+            personal_excluded.extend(cap_excluded)
+
+        if self._personal_briefing_enabled(ctx.config):
+            self.run_store.write_json(
+                run_id,
+                "source_policy_decisions.json",
+                source_policy_decisions(important_items, personal_excluded),
+            )
 
         self.run_store.save_items(run_id, "filtered", items_to_dicts(important_items))
         meta = self.run_store.update_meta(
@@ -801,9 +832,32 @@ class HorizonPipelineService:
                 items_used=len(enrichment_input),
             )
 
-        ai_client = ctx.runtime.create_ai_client(ctx.config.ai)
-        enricher = self._make_content_enricher(ctx.runtime.ContentEnricher, ai_client, trace_reporter)
-        await enricher.enrich_batch(enrichment_input)
+        items_to_enrich = enrichment_input
+        if self._personal_briefing_enabled(ctx.config) and ctx.config.personal_briefing.enrichment.disable_for_sensitive_topics:
+            items_to_enrich = []
+            for item in enrichment_input:
+                if item.metadata.get("sensitive_topic") or item.metadata.get("sensitive_topic_auto"):
+                    item.metadata["enrichment_skipped"] = "sensitive topic"
+                else:
+                    items_to_enrich.append(item)
+
+        if items_to_enrich:
+            ai_client = ctx.runtime.create_ai_client(ctx.config.ai)
+            search_result_filter = None
+            if (
+                self._personal_briefing_enabled(ctx.config)
+                and ctx.config.personal_briefing.enrichment.filter_search_results_by_source_policy
+            ):
+                storage = make_storage(ctx.runtime, ctx.config_path)
+                orchestrator = make_orchestrator(ctx.runtime, ctx.config, storage)
+                search_result_filter = getattr(orchestrator, "_personal_search_result_allowed", None)
+            enricher = self._make_content_enricher(
+                ctx.runtime.ContentEnricher,
+                ai_client,
+                trace_reporter,
+                search_result_filter=search_result_filter,
+            )
+            await enricher.enrich_batch(items_to_enrich)
 
         self.run_store.save_items(run_id, "enriched", items_to_dicts(enrichment_input))
 
@@ -815,6 +869,7 @@ class HorizonPipelineService:
             run_id,
             {
                 "enriched_count": len(enrichment_input),
+                "enriched_llm_count": len(items_to_enrich),
                 "enrichment_input_count": len(enrichment_input),
                 "enrichment_source_count": len(items),
                 **limit_meta,
@@ -882,16 +937,37 @@ class HorizonPipelineService:
 
         if self._uses_personal_summary(ctx.config, language):
             renderer = ctx.runtime.PersonalBriefingRenderer()
-            summary = renderer.render(date_str, summary_items, tracked=[])
+            summary_context = {
+                "total_fetched": total_fetched,
+                "source_items": len(items),
+                "selected_count": len(summary_items),
+                "threshold": getattr(getattr(ctx.config, "filtering", None), "ai_score_threshold", None),
+            }
+            summary = self._render_personal_summary(renderer, date_str, summary_items, tracked=[], context=summary_context)
             critic_config = ctx.config.personal_briefing.critic_pass
             if critic_config.enabled:
-                critic = ctx.runtime.run_briefing_critic(summary, summary_items)
+                critic = ctx.runtime.run_briefing_critic(
+                    summary,
+                    summary_items,
+                    high_confidence_requires_supporting_source=self._high_confidence_requires_supporting_source(ctx.config),
+                )
                 if (not critic.passed) and critic_config.auto_revise_once:
                     revised_items = drop_items_flagged_by_critic(summary_items, critic)
                     if len(revised_items) < len(summary_items):
                         summary_items = revised_items
-                        summary = renderer.render(date_str, summary_items, tracked=[])
-                        critic = ctx.runtime.run_briefing_critic(summary, summary_items)
+                        summary_context["selected_count"] = len(summary_items)
+                        summary = self._render_personal_summary(
+                            renderer,
+                            date_str,
+                            summary_items,
+                            tracked=[],
+                            context=summary_context,
+                        )
+                        critic = ctx.runtime.run_briefing_critic(
+                            summary,
+                            summary_items,
+                            high_confidence_requires_supporting_source=self._high_confidence_requires_supporting_source(ctx.config),
+                        )
                 if not critic.passed:
                     failed = summary + "\n\n## Предупреждения аудита\n" + "\n".join(
                         [f"- {issue}" for issue in critic.critical_issues]
@@ -965,6 +1041,19 @@ class HorizonPipelineService:
             "preview": summary[:1200],
             "meta": meta,
         }
+
+    @staticmethod
+    def _render_personal_summary(
+        renderer: Any,
+        date: str,
+        items: list[Any],
+        *,
+        tracked: list[dict[str, Any]],
+        context: dict[str, Any],
+    ) -> str:
+        if "context" in signature(renderer.render).parameters:
+            return renderer.render(date, items, tracked=tracked, context=context)
+        return renderer.render(date, items, tracked=tracked)
 
     async def run_pipeline(
         self,
@@ -1228,6 +1317,12 @@ class HorizonPipelineService:
         return {str(topic) for topic in getattr(personal, "priority_topics", [])}
 
     @staticmethod
+    def _high_confidence_requires_supporting_source(config: Any) -> bool:
+        personal = getattr(config, "personal_briefing", None)
+        corroboration = getattr(personal, "corroboration", None)
+        return bool(getattr(corroboration, "high_confidence_requires_supporting_source", True))
+
+    @staticmethod
     def _uses_personal_summary(config: Any, language: str) -> bool:
         personal = getattr(config, "personal_briefing", None)
         return bool(
@@ -1272,6 +1367,7 @@ class HorizonPipelineService:
         enricher_cls: Any,
         ai_client: Any,
         trace_reporter: Any | None = None,
+        search_result_filter: Any | None = None,
     ) -> Any:
         kwargs: dict[str, Any] = {}
         try:
@@ -1280,6 +1376,8 @@ class HorizonPipelineService:
             params = {}
         if trace_reporter is not None and "verbose_reporter" in params:
             kwargs["verbose_reporter"] = trace_reporter
+        if search_result_filter is not None and "search_result_filter" in params:
+            kwargs["search_result_filter"] = search_result_filter
         return enricher_cls(ai_client, **kwargs)
 
     @staticmethod

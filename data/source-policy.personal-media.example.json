@@ -1,0 +1,57 @@
+{
+  "default_language": "ru",
+  "timezone": "Europe/Paris",
+  "allowed_social_primary_actors": [
+    "openai",
+    "sama",
+    "federalreserve",
+    "ecb",
+    "nasa"
+  ],
+  "discovery": {
+    "discovery_source_types": ["telegram", "reddit", "hackernews"],
+    "allow_trusted_external_links": true,
+    "exclude_discovery_only_without_trusted_link": true,
+    "allowlisted_telegram_channels": []
+  },
+  "source_domain_rules": {
+    "reuters.com": {"role": "fact_layer", "tier": "tier1", "name": "Reuters"},
+    "reutersagency.com": {"role": "fact_layer", "tier": "tier1", "name": "Reuters"},
+    "apnews.com": {"role": "fact_layer", "tier": "tier1", "name": "Associated Press"},
+    "bbc.com": {"role": "fact_layer", "tier": "tier1", "name": "BBC"},
+    "bbc.co.uk": {"role": "fact_layer", "tier": "tier1", "name": "BBC"},
+    "ft.com": {
+      "role": "context_layer",
+      "tier": "tier1",
+      "name": "Financial Times",
+      "can_confirm_fact": true,
+      "can_confirm_sensitive": false
+    },
+    "economist.com": {
+      "role": "context_layer",
+      "tier": "tier1",
+      "name": "The Economist",
+      "can_confirm_fact": false,
+      "can_confirm_sensitive": false,
+      "counts_as_independent_confirmation": false
+    },
+    "theguardian.com": {"role": "context_layer", "tier": "tier2", "name": "The Guardian"},
+    "interfax.ru": {"role": "russian_institutional_frame", "tier": "tier2", "name": "Interfax"},
+    "kommersant.ru": {"role": "russian_institutional_frame", "tier": "tier2", "name": "Kommersant"},
+    "rbc.ru": {"role": "russian_institutional_frame", "tier": "tier2", "name": "RBC"},
+    "mos.ru": {"role": "official_primary_source", "tier": "tier2", "name": "mos.ru"},
+    "federalreserve.gov": {"role": "official_primary_source", "tier": "tier1", "name": "Federal Reserve"},
+    "ecb.europa.eu": {"role": "official_primary_source", "tier": "tier1", "name": "European Central Bank"},
+    "nasa.gov": {"role": "science_primary_source", "tier": "tier1", "name": "NASA"},
+    "nature.com": {"role": "science_primary_source", "tier": "tier1", "name": "Nature"},
+    "science.org": {"role": "science_primary_source", "tier": "tier1", "name": "Science"},
+    "arxiv.org": {"role": "science_preprint", "tier": "tier2", "name": "arXiv", "notes": "not peer-reviewed"},
+    "github.com": {"role": "tech_primary_source", "tier": "tier2", "name": "GitHub"},
+    "x.com": {"role": "social_primary_statement_only", "tier": "unknown", "name": "X"},
+    "twitter.com": {"role": "social_primary_statement_only", "tier": "unknown", "name": "Twitter/X"},
+    "t.me": {"role": "blocked_as_fact_source", "tier": "unknown", "name": "Telegram"},
+    "telegram.org": {"role": "blocked_as_fact_source", "tier": "unknown", "name": "Telegram"},
+    "reddit.com": {"role": "blocked_as_fact_source", "tier": "unknown", "name": "Reddit"},
+    "news.ycombinator.com": {"role": "blocked_as_fact_source", "tier": "unknown", "name": "Hacker News"}
+  }
+}

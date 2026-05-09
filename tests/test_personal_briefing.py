@@ -5,12 +5,15 @@ from datetime import datetime, timedelta, timezone
 import pytest
 
 from src.horizon_ext.personal import (
+    CorroborationGate,
     EvidenceChecker,
     PersonalBriefingRenderer,
     SourcePolicyClassifier,
     conservative_default_policy,
+    detect_sensitive_topic,
     load_source_policy,
     run_briefing_critic,
+    prefilter_personal_candidates,
 )
 from src.ai.prompts import PERSONAL_BRIEFING_ANALYSIS_USER
 from src.models import AIConfig, AIProvider, Config, ContentItem, FilteringConfig, SourceType, SourcesConfig
@@ -85,6 +88,37 @@ def test_policy_load_and_override(tmp_path):
     assert policy.source_domain_rules["reuters.com"]["role"] == "context_layer"
 
 
+def test_policy_override_can_disable_fact_confirmation(tmp_path):
+    p = tmp_path / "policy.json"
+    p.write_text(
+        json.dumps(
+            {
+                "source_domain_rules": {
+                    "example.com": {
+                        "role": "fact_layer",
+                        "tier": "tier1",
+                        "name": "Example",
+                        "can_confirm_fact": False,
+                    }
+                }
+            }
+        ),
+        encoding="utf-8",
+    )
+    policy, error = load_source_policy(str(p))
+    assert error == ""
+    item = mk_item("https://example.com/report")
+    item.metadata.update(SourcePolicyClassifier(policy).classify(item))
+    item.metadata.update({"claim_type": "confirmed_fact", "confidence": "high"})
+
+    EvidenceChecker().audit_item(item)
+
+    assert item.metadata["can_confirm_fact"] is False
+    assert item.metadata["counts_as_independent_confirmation"] is False
+    assert item.metadata["claim_type"] == "unverified_report"
+    assert "source policy does not allow confirmed_fact" in item.metadata["unsupported_claims"]
+
+
 @pytest.mark.parametrize(
     ("item", "role", "source_name", "notes"),
     [
@@ -99,9 +133,9 @@ def test_policy_load_and_override(tmp_path):
         (mk_item("https://arxiv.org/abs/2605.00001"), "science_preprint", "arXiv", "not peer-reviewed"),
         (mk_item("https://github.com/org/repo/releases/tag/v1"), "tech_primary_source", "GitHub", ""),
         (mk_item("https://unknown.example/news"), "unclassified", None, ""),
-        (mk_item("https://reuters.com/world/test", source=SourceType.REDDIT), "blocked_as_fact_source", "Reddit", ""),
-        (mk_item("https://apnews.com/article/test", source=SourceType.HACKERNEWS), "blocked_as_fact_source", "Hacker News", ""),
-        (mk_item("https://github.com/org/repo/releases/tag/v1", source=SourceType.HACKERNEWS), "blocked_as_fact_source", "Hacker News", ""),
+        (mk_item("https://reuters.com/world/test", source=SourceType.REDDIT), "fact_layer", "Reuters", ""),
+        (mk_item("https://apnews.com/article/test", source=SourceType.HACKERNEWS), "fact_layer", "Associated Press", ""),
+        (mk_item("https://github.com/org/repo/releases/tag/v1", source=SourceType.HACKERNEWS), "tech_primary_source", "GitHub", ""),
         (mk_item("https://t.me/channel/1", source=SourceType.TELEGRAM), "blocked_as_fact_source", "Telegram", ""),
         (mk_item("https://x.com/openai/status/1", source=SourceType.TWITTER), "social_primary_statement_only", "Twitter/X", ""),
         (mk_item("https://github.com/org/repo/releases/tag/v1", source=SourceType.TWITTER), "social_primary_statement_only", "Twitter/X", ""),
@@ -122,7 +156,7 @@ def test_prefilter_social_and_blocked_rules(tmp_path):
     }
     (tmp_path / "p.json").write_text('{"allowed_social_primary_actors":["openai"]}', encoding="utf-8")
     o = mk_orchestrator(tmp_path, personal=personal)
-    blocked = mk_item("https://reuters.com/a", source=SourceType.REDDIT, title="blocked")
+    blocked = mk_item("https://reddit.com/r/news/comments/1", source=SourceType.REDDIT, title="blocked")
     unknown = mk_item("https://unknown.example/a", title="unknown")
     allowed_social = mk_item("https://x.com/openai/status/1", source=SourceType.TWITTER, author="@openai", title="allowed")
     disallowed_social = mk_item("https://x.com/random/status/1", source=SourceType.TWITTER, author="@random", title="disallowed")
@@ -136,6 +170,88 @@ def test_prefilter_social_and_blocked_rules(tmp_path):
     assert {x["item"] for x in excluded} == {"blocked", "unknown", "disallowed"}
     merged = o.merge_cross_source_duplicates(candidates)
     assert [i.title for i in merged] == ["allowed", "allowed-rss"]
+
+
+def test_discovery_link_uses_canonical_evidence_but_not_confirmation():
+    policy = conservative_default_policy()
+    classifier = SourcePolicyClassifier(policy)
+    telegram = mk_item(
+        "https://reuters.com/world/test",
+        source=SourceType.TELEGRAM,
+        author="channel",
+        title="telegram linked reuters",
+    )
+    telegram.metadata.update({"channel": "channel", "msg_url": "https://t.me/channel/1"})
+    telegram.metadata.update(classifier.classify(telegram))
+
+    candidates, excluded = prefilter_personal_candidates([telegram], policy)
+
+    assert candidates == [telegram]
+    assert excluded == []
+    assert telegram.metadata["source_role"] == "fact_layer"
+    assert telegram.metadata["discovery_source_type"] == "telegram"
+    assert telegram.metadata["discovery_url"] == "https://t.me/channel/1"
+    assert telegram.metadata["discovery_counts_as_confirmation"] is False
+    assert telegram.metadata["evidence_source_domain"] == "reuters.com"
+    assert telegram.metadata["evidence_fetch_status"] == "linked_only"
+    assert telegram.metadata["counts_as_independent_confirmation"] is False
+
+
+def test_discovery_post_without_trusted_external_url_is_excluded():
+    policy = conservative_default_policy()
+    classifier = SourcePolicyClassifier(policy)
+    telegram = mk_item("https://t.me/channel/1", source=SourceType.TELEGRAM, title="telegram only")
+    telegram.metadata.update({"channel": "channel"})
+    telegram.metadata.update(classifier.classify(telegram))
+
+    candidates, excluded = prefilter_personal_candidates([telegram], policy)
+
+    assert candidates == []
+    assert excluded[0]["reason"] == "discovery-only"
+    assert excluded[0]["discovery_source_type"] == "telegram"
+
+
+@pytest.mark.parametrize("domain", ["interfax.ru", "rbc.ru", "kommersant.ru"])
+def test_sensitive_russian_institutional_corroboration_downgrade(domain):
+    checker = EvidenceChecker(time_window_hours=24)
+    item = mk_item(f"https://{domain}/a", title="Sanctions and war update")
+    item.metadata.update({
+        "source_role": "russian_institutional_frame",
+        "claim_type": "confirmed_fact",
+        "confidence": "high",
+    })
+
+    checker.audit_item(item)
+    CorroborationGate().apply([item])
+
+    assert item.metadata["sensitive_topic_auto"] is True
+    assert item.metadata["claim_type"] == "party_claim"
+    assert item.metadata["confidence"] == "medium"
+    assert item.metadata["corroboration"]["passed"] is False
+
+
+@pytest.mark.parametrize(
+    "title",
+    [
+        "БПЛА атаковал объект",
+        "ВСУ сообщили об обстреле",
+        "Минобороны и МО РФ выпустили заявление",
+        "иноагент и нежелательная организация оспорили решение",
+        "Russia-Ukraine battlefield update reports casualties",
+    ],
+)
+def test_sensitive_detector_matches_required_terms(title):
+    assert detect_sensitive_topic(mk_item("https://example.com/a", title=title)) is True
+
+
+def test_sensitive_detector_does_not_match_cybersecurity_security_release():
+    item = mk_item(
+        "https://github.com/org/repo/releases/tag/v1",
+        title="Open source cybersecurity security release",
+        content="This release fixes memory safety bugs in a library.",
+    )
+
+    assert detect_sensitive_topic(item) is False
 
 
 def test_evidence_checker_required_downgrades():
@@ -201,6 +317,81 @@ def test_evidence_checker_required_downgrades():
     assert "outside time window" in old.metadata["source_conflicts"]
 
 
+def test_evidence_checker_caps_high_without_supporting_confirmation():
+    checker = EvidenceChecker(time_window_hours=24)
+    classifier = SourcePolicyClassifier(conservative_default_policy())
+    item = mk_item("https://reuters.com/world/a")
+    item.metadata.update(classifier.classify(item))
+    item.metadata.update({
+        "claim_type": "confirmed_fact",
+        "confidence": "high",
+        "evidence_strength": "high",
+    })
+
+    checker.audit_item(item)
+
+    assert item.metadata["claim_type"] == "confirmed_fact"
+    assert item.metadata["confidence"] == "medium"
+    assert item.metadata["evidence_strength"] == "medium"
+    assert "high confidence requires independent supporting source" in item.metadata["unsupported_claims"]
+    assert "confidence capped" in item.metadata["source_policy_notes"]
+
+
+def test_high_confidence_gate_can_be_disabled_by_config():
+    checker = EvidenceChecker(time_window_hours=24, high_confidence_requires_supporting_source=False)
+    classifier = SourcePolicyClassifier(conservative_default_policy())
+    item = mk_item("https://reuters.com/world/a")
+    item.metadata.update(classifier.classify(item))
+    item.metadata.update({
+        "claim_type": "confirmed_fact",
+        "confidence": "high",
+        "evidence_strength": "high",
+    })
+
+    checker.audit_item(item)
+    CorroborationGate({"high_confidence_requires_supporting_source": False}).apply([item])
+
+    assert item.metadata["claim_type"] == "confirmed_fact"
+    assert item.metadata["confidence"] == "high"
+
+
+def test_evidence_checker_prevents_discovery_link_confirmed_fact():
+    checker = EvidenceChecker(time_window_hours=24)
+    classifier = SourcePolicyClassifier(conservative_default_policy())
+    item = mk_item(
+        "https://reuters.com/world/a",
+        source=SourceType.TELEGRAM,
+        title="telegram linked reuters fact",
+    )
+    item.metadata.update({"channel": "channel", "msg_url": "https://t.me/channel/1"})
+    item.metadata.update(classifier.classify(item))
+    item.metadata.update({"claim_type": "confirmed_fact", "confidence": "high"})
+
+    checker.audit_item(item)
+
+    assert item.metadata["source_role"] == "fact_layer"
+    assert item.metadata["counts_as_independent_confirmation"] is False
+    assert item.metadata["claim_type"] == "unverified_report"
+    assert item.metadata["confidence"] == "medium"
+    assert "source policy does not allow confirmed_fact" in item.metadata["unsupported_claims"]
+
+
+def test_sensitive_fact_requires_independent_sensitive_support():
+    checker = EvidenceChecker(time_window_hours=24)
+    classifier = SourcePolicyClassifier(conservative_default_policy())
+    item = mk_item("https://reuters.com/world/a", title="War sanctions update")
+    item.metadata.update(classifier.classify(item))
+    item.metadata.update({"claim_type": "confirmed_fact", "confidence": "high"})
+
+    checker.audit_item(item)
+
+    assert item.metadata["sensitive_topic"] is True
+    assert item.metadata["can_confirm_sensitive"] is True
+    assert item.metadata["claim_type"] == "unverified_report"
+    assert item.metadata["confidence"] == "medium"
+    assert "sensitive topic lacks independent sensitive confirmation" in item.metadata["unsupported_claims"]
+
+
 def test_renderer_required_sections_and_labels():
     items = []
     for topic in ["russia", "moscow", "world_economy", "tech_ai", "open_source", "big_tech", "science", "world", "other"]:
@@ -262,6 +453,55 @@ def test_renderer_required_sections_and_labels():
         assert out.count(f"### {topic} title") == 1
 
 
+def test_renderer_separates_statement_items_and_empty_context_passes_critic():
+    statement = mk_item("https://mos.ru/a", title="official statement")
+    statement.metadata.update({
+        "topic": "moscow",
+        "confidence": "medium",
+        "claim_type": "official_statement",
+        "source_role": "official_primary_source",
+        "source_name": "mos.ru",
+        "source_url": "https://mos.ru/a",
+    })
+
+    out = PersonalBriefingRenderer().render("2026-05-03", [statement])
+    assert "## Заявления и сообщения, требующие контекста" in out
+    assert "### official statement" in out
+    assert "Политика источника:" in out
+    assert "независимое подтверждение: нет" in out
+
+    empty = PersonalBriefingRenderer().render(
+        "2026-05-03",
+        [],
+        context={"total_fetched": 3, "source_items": 1, "selected_count": 0, "threshold": 5},
+    )
+    critic = run_briefing_critic(empty, [])
+
+    assert "## Контекст отбора" in empty
+    assert "Прошло в итоговую сводку: 0" in empty
+    assert critic.passed is True
+
+
+def test_critic_fails_high_confidence_without_supporting_confirmation():
+    item = mk_item("https://reuters.com/world/a", title="unsupported high")
+    item.metadata.update({
+        "topic": "world",
+        "confidence": "high",
+        "claim_type": "confirmed_fact",
+        "source_role": "fact_layer",
+        "source_name": "Reuters",
+        "source_url": "https://reuters.com/world/a",
+        "can_confirm_fact": True,
+        "can_confirm_sensitive": True,
+        "counts_as_independent_confirmation": True,
+    })
+    out = PersonalBriefingRenderer().render("2026-05-03", [item])
+    critic = run_briefing_critic(out, [item])
+
+    assert critic.passed is False
+    assert any("high confidence lacks independent supporting source" in issue for issue in critic.critical_issues)
+
+
 def test_renderer_does_not_render_main_for_disputed_only():
     item = mk_item("https://interfax.ru/a", title="disputed-only")
     item.metadata.update({"source_role": "russian_institutional_frame", "confidence": "low", "topic": "world", "summary": "x"})
@@ -285,7 +525,7 @@ def test_renderer_puts_unknown_topics_in_other_without_critic_warning():
     out = PersonalBriefingRenderer().render("2026-05-03", [item])
     critic = run_briefing_critic(out, [item])
 
-    assert "## Другое" in out
+    assert "## Заявления и сообщения, требующие контекста" in out
     assert "### security item" in out
     assert out.count("### security item") == 1
     assert critic.passed is True
@@ -540,13 +780,13 @@ def test_local_personal_smoke_without_real_api(tmp_path, monkeypatch):
     o = mk_orchestrator(tmp_path, personal=personal, languages=["en", "zh"])
     reuters = mk_item("https://reuters.com/world/test", title="Reuters world")
     moscow = mk_item("https://mos.ru/news/test", title="Moscow official")
-    reddit = mk_item("https://reuters.com/world/test", source=SourceType.REDDIT, title="Reddit link")
+    reddit = mk_item("https://reuters.com/world/test-2", source=SourceType.REDDIT, title="Reddit link")
 
     async def _fetch(_since):
         return [reuters, moscow, reddit]
 
     async def _analyze(items):
-        assert [i.title for i in items] == ["Reuters world", "Moscow official"]
+        assert [i.title for i in items] == ["Reuters world", "Moscow official", "Reddit link"]
         for item in items:
             item.ai_score = 9
             item.metadata.update({
@@ -577,9 +817,9 @@ def test_local_personal_smoke_without_real_api(tmp_path, monkeypatch):
     text = summary_path.read_text(encoding="utf-8")
     assert "Reuters world" in text
     assert "Moscow official" in text
-    assert "Reddit link" not in text
+    assert "Reddit link" in text
     assert "## Мир" in text
-    assert "## Москва" in text
+    assert "## Заявления и сообщения, требующие контекста" in text
     assert "fact_layer" in text
     assert "официальный источник" in text
     assert "https://reuters.com/world/test" in text

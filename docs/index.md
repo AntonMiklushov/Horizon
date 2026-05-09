@@ -12,6 +12,7 @@ title: Home
 ## 文档
 
 - [配置指南](configuration) — AI 提供商、信息源、过滤规则与环境变量替换
+- [个人媒体简报](personal_media_briefing) — 发现源、证据源和敏感主题佐证规则
 - [信息源采集器](scrapers) — Horizon 如何从 GitHub、Hacker News、RSS、Reddit 采集内容
 - [评分系统](scoring) — 基于 AI 的内容分析与 0-10 评分体系
 
@@ -37,6 +38,7 @@ Welcome to [Horizon](https://github.com/thysrael/Horizon), an AI-driven informat
 ## Documentation
 
 - [Configuration Guide](configuration) — AI providers, information sources, filtering, and environment variable substitution
+- [Personal Media Briefing](personal_media_briefing) — Discovery sources, evidence sources, and sensitive-topic corroboration
 - [Source Scrapers](scrapers) — How Horizon collects content from GitHub, Hacker News, RSS, and Reddit
 - [Scoring System](scoring) — AI-based content analysis and the 0-10 scoring scale
 

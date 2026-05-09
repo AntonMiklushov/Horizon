@@ -9,7 +9,7 @@ import json
 import re
 import sys
 import os
-from typing import List, Optional
+from typing import Callable, List, Optional
 from pydantic import ValidationError
 from tenacity import retry, stop_after_attempt, wait_exponential
 from rich.progress import Progress, SpinnerColumn, BarColumn, TextColumn, MofNCompleteColumn
@@ -28,9 +28,15 @@ from ..models import ContentItem
 class ContentEnricher:
     """Enriches high-scoring content items with background knowledge."""
 
-    def __init__(self, ai_client: AIClient, verbose_reporter=None):
+    def __init__(
+        self,
+        ai_client: AIClient,
+        verbose_reporter=None,
+        search_result_filter: Callable[[dict], bool] | None = None,
+    ):
         self.client = ai_client
         self.verbose_reporter = verbose_reporter
+        self.search_result_filter = search_result_filter
 
     async def enrich_batch(self, items: List[ContentItem]) -> None:
         """Enrich items in-place with background knowledge.
@@ -104,10 +110,13 @@ class ContentEnricher:
         except Exception:
             return []
 
-        return [
+        normalized = [
             {"title": r.get("title", ""), "url": r.get("href", ""), "body": r.get("body", "")}
             for r in (results or [])
         ]
+        if self.search_result_filter is not None:
+            normalized = [result for result in normalized if self.search_result_filter(result)]
+        return normalized
 
     @staticmethod
     def _parse_json_response(response: str) -> Optional[dict]:

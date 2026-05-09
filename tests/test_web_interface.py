@@ -36,6 +36,48 @@ def write_config(tmp_path: Path, config: Config | None = None) -> Path:
     return config_path
 
 
+def test_policy_settings_page_saves_controls_and_has_no_telegram_handling(tmp_path: Path) -> None:
+    from fastapi.testclient import TestClient
+
+    config_path = write_config(tmp_path)
+    app = create_app(config_path=str(config_path), data_dir=str(tmp_path))
+    client = TestClient(app)
+
+    response = client.get("/settings/policy")
+    assert response.status_code == 200
+    assert 'name="telegram_handling"' not in response.text
+    assert "source policy JSON" in response.text
+
+    save = client.post(
+        "/settings/policy",
+        data={
+            "personal_enabled": "on",
+            "policy_preset": "personal-media",
+            "source_policy_file": "data/source-policy.personal-media.example.json",
+            "corroboration_enabled": "on",
+            "sensitive_requires_confirmation": "on",
+            "min_independent_confirmations": "1",
+            "disable_sensitive_enrichment": "on",
+            "filter_enrichment_results": "on",
+            "selection_caps_enabled": "on",
+            "max_sensitive_statement_items": "3",
+        },
+    )
+
+    assert save.status_code == 200
+    assert "Policy settings saved." in save.text
+    saved = Config.model_validate_json(config_path.read_text(encoding="utf-8"))
+    assert saved.personal_briefing.enabled is True
+    assert saved.personal_briefing.source_policy_file == "data/source-policy.personal-media.example.json"
+    assert saved.personal_briefing.corroboration.enabled is True
+    assert saved.personal_briefing.corroboration.sensitive_requires_independent_confirmation is True
+    assert saved.personal_briefing.corroboration.min_independent_confirmations == 1
+    assert saved.personal_briefing.enrichment.disable_for_sensitive_topics is True
+    assert saved.personal_briefing.enrichment.filter_search_results_by_source_policy is True
+    assert saved.personal_briefing.selection_caps.enabled is True
+    assert saved.personal_briefing.selection_caps.max_sensitive_statement_items == 3
+
+
 def test_basic_settings_form_validates_and_sets_backup_fields() -> None:
     config = load_example_config()
     updated = apply_basic_settings(
@@ -619,6 +661,121 @@ def test_run_detail_renders_report_tabs_and_raw_stage(tmp_path: Path) -> None:
     assert "textContent" in response.text
     assert "Demo item" in response.text
     assert '<span class="pill">completed</span>' in response.text
+
+
+def test_run_detail_renders_source_policy_summary_and_item_evidence(tmp_path: Path) -> None:
+    from fastapi.testclient import TestClient
+
+    config_path = write_config(tmp_path)
+    service = HorizonPipelineService(runs_root=tmp_path / "runs")
+    service.run_store.create_run("web-evidence")
+    service.run_store.save_items(
+        "web-evidence",
+        "filtered",
+        [
+            {
+                "id": "item-1",
+                "source_type": "rss",
+                "title": "Evidence item",
+                "url": "https://example.com/evidence",
+                "ai_score": 8,
+                "metadata": {
+                    "source_role": "fact_layer",
+                    "policy_decision": "allowed",
+                    "claim_type": "confirmed_fact",
+                    "confidence": "medium",
+                    "counts_as_independent_confirmation": True,
+                },
+            }
+        ],
+    )
+    service.run_store.write_json(
+        "web-evidence",
+        "source_policy_decisions.json",
+        {
+            "items": [
+                {
+                    "id": "item-1",
+                    "source_role": "fact_layer",
+                    "policy_decision": "allowed",
+                    "claim_type": "confirmed_fact",
+                    "confidence": "medium",
+                },
+                {
+                    "id": "item-2",
+                    "source_role": "unclassified",
+                    "policy_decision": "allowed",
+                    "source_policy_notes": "downgraded because source cannot independently confirm facts",
+                },
+            ],
+            "excluded": [
+                {
+                    "id": "item-3",
+                    "source_role": "blocked_as_fact_source",
+                    "policy_decision": "excluded",
+                }
+            ],
+        },
+    )
+    service.run_store.update_meta(
+        "web-evidence",
+        {"hours": 24, "raw_count": 3, "local_only": True, "status": "completed"},
+    )
+    app = create_app(config_path=str(config_path), data_dir=str(tmp_path), service=service)
+
+    response = TestClient(app).get("/runs/web-evidence")
+
+    assert response.status_code == 200
+    assert "Source policy decisions:" in response.text
+    assert "3 items" in response.text
+    assert "1 exclusions" in response.text
+    assert "1 unclassified" in response.text
+    assert "1 downgraded" in response.text
+    for expected in [
+        "Source role",
+        "Policy decision",
+        "Claim",
+        "Confidence",
+        "Independent",
+        "fact_layer",
+        "allowed",
+        "confirmed_fact",
+        "medium",
+        "yes",
+    ]:
+        assert expected in response.text
+
+
+def test_run_detail_renders_useful_empty_completed_report(tmp_path: Path) -> None:
+    from fastapi.testclient import TestClient
+
+    config_path = write_config(tmp_path)
+    service = HorizonPipelineService(runs_root=tmp_path / "runs")
+    service.run_store.create_run("web-empty")
+    service.run_store.update_meta(
+        "web-empty",
+        {"hours": 168, "raw_count": 5, "local_only": True, "status": "completed"},
+    )
+    service.run_store.save_summary(
+        "web-empty",
+        "ru",
+        (
+            "# Сводка — 2026-05-08\n\n"
+            "Сегодня нет событий, прошедших порог отбора.\n\n"
+            "## Контекст отбора\n\n"
+            "- Получено из источников: 5\n"
+            "- Прошло в итоговую сводку: 0\n"
+            "- Порог отбора: 7\n"
+        ),
+    )
+    app = create_app(config_path=str(config_path), data_dir=str(tmp_path), service=service)
+
+    response = TestClient(app).get("/runs/web-empty")
+
+    assert response.status_code == 200
+    assert "Сегодня нет событий" in response.text
+    assert "Прошло в итоговую сводку: 0" in response.text
+    assert "No rendered report is available yet." not in response.text
 
 
 def test_run_detail_surfaces_prior_failed_activity(tmp_path: Path) -> None:

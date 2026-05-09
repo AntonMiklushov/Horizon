@@ -1,0 +1,77 @@
+{% extends "base.html" %}
+{% block title %}Policy Settings{% endblock %}
+{% block content %}
+<div class="page-header">
+  <div>
+    <h1>Policy Settings</h1>
+    <p class="muted">Personal briefing controls for evidence, discovery sources, corroboration, and enrichment.</p>
+  </div>
+  <div class="header-actions">
+    <a class="button secondary" href="/settings/config">Full Config</a>
+  </div>
+</div>
+
+{% if saved %}<div class="notice saved">Policy settings saved.</div>{% endif %}
+{% if error %}<div class="notice error">{{ error }}</div>{% endif %}
+{% if config_error %}<div class="notice error">{{ config_error }}</div>{% endif %}
+
+{% if config %}
+<form method="post" class="panel" data-testid="policy-settings-form">
+  <h2>Personal Briefing</h2>
+  <div class="checks">
+    <label class="checkline" for="personal_enabled"><input id="personal_enabled" type="checkbox" name="personal_enabled" {% if config.personal_briefing.enabled %}checked{% endif %}> Enabled</label>
+  </div>
+
+  <div class="row">
+    <div class="span-4">
+      <label for="policy_preset">Policy Preset</label>
+      <select id="policy_preset" name="policy_preset">
+        <option value="personal-media" {% if policy_preset == "personal-media" %}selected{% endif %}>Personal Media</option>
+        <option value="personal-news" {% if policy_preset == "personal-news" %}selected{% endif %}>Personal News</option>
+        <option value="custom" {% if policy_preset == "custom" %}selected{% endif %}>Custom</option>
+      </select>
+    </div>
+    <div class="span-8">
+      <label for="source_policy_file">Source Policy File</label>
+      <input id="source_policy_file" name="source_policy_file" type="text" value="{{ config.personal_briefing.source_policy_file }}">
+    </div>
+  </div>
+
+  <h2>Discovery Sources</h2>
+  <p class="muted">Telegram, Reddit, and Hacker News are treated as discovery trails. Trusted external links use the canonical domain policy; platform posts alone remain discovery-only. Telegram allowlists and discovery behavior are edited in the source policy JSON.</p>
+
+  <h2>Corroboration</h2>
+  <div class="checks">
+    <label class="checkline" for="corroboration_enabled"><input id="corroboration_enabled" type="checkbox" name="corroboration_enabled" {% if config.personal_briefing.corroboration.enabled %}checked{% endif %}> Enabled</label>
+    <label class="checkline" for="sensitive_requires_confirmation"><input id="sensitive_requires_confirmation" type="checkbox" name="sensitive_requires_confirmation" {% if config.personal_briefing.corroboration.sensitive_requires_independent_confirmation %}checked{% endif %}> Sensitive confirmation</label>
+  </div>
+  <div class="row">
+    <div class="span-3">
+      <label for="min_independent_confirmations">Independent Confirmations</label>
+      <input id="min_independent_confirmations" name="min_independent_confirmations" type="number" min="0" max="5" value="{{ config.personal_briefing.corroboration.min_independent_confirmations }}">
+    </div>
+  </div>
+
+  <h2>Enrichment</h2>
+  <div class="checks">
+    <label class="checkline" for="disable_sensitive_enrichment"><input id="disable_sensitive_enrichment" type="checkbox" name="disable_sensitive_enrichment" {% if config.personal_briefing.enrichment.disable_for_sensitive_topics %}checked{% endif %}> Skip sensitive enrichment</label>
+    <label class="checkline" for="filter_enrichment_results"><input id="filter_enrichment_results" type="checkbox" name="filter_enrichment_results" {% if config.personal_briefing.enrichment.filter_search_results_by_source_policy %}checked{% endif %}> Filter search results</label>
+  </div>
+
+  <h2>Selection Caps</h2>
+  <div class="checks">
+    <label class="checkline" for="selection_caps_enabled"><input id="selection_caps_enabled" type="checkbox" name="selection_caps_enabled" {% if config.personal_briefing.selection_caps.enabled %}checked{% endif %}> Enabled</label>
+  </div>
+  <div class="row">
+    <div class="span-3">
+      <label for="max_sensitive_statement_items">Sensitive Statements</label>
+      <input id="max_sensitive_statement_items" name="max_sensitive_statement_items" type="number" min="0" max="50" value="{{ config.personal_briefing.selection_caps.max_sensitive_statement_items }}">
+    </div>
+  </div>
+
+  <div class="form-actions">
+    <button type="submit" data-testid="save-policy-settings">Save Policy</button>
+  </div>
+</form>
+{% endif %}
+{% endblock %}
