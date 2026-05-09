@@ -38,16 +38,7 @@
   </div>
 
   <h2>Discovery Sources</h2>
-  <div class="row">
-    <div class="span-4">
-      <label for="telegram_handling">Telegram Handling</label>
-      <select id="telegram_handling" name="telegram_handling">
-        <option value="external-links-only" selected>External links only</option>
-        <option value="allowlisted-statements">Allowlisted statements</option>
-      </select>
-    </div>
-  </div>
-  <p class="muted">Telegram, Reddit, and Hacker News are treated as discovery trails. Trusted external links use the canonical domain policy; platform posts alone remain discovery-only unless allowlisted in the policy JSON.</p>
+  <p class="muted">Telegram, Reddit, and Hacker News are treated as discovery trails. Trusted external links use the canonical domain policy; platform posts alone remain discovery-only. Telegram allowlists and discovery behavior are edited in the source policy JSON.</p>
 
   <h2>Corroboration</h2>
   <div class="checks">

@@ -20,8 +20,21 @@
     "apnews.com": {"role": "fact_layer", "tier": "tier1", "name": "Associated Press"},
     "bbc.com": {"role": "fact_layer", "tier": "tier1", "name": "BBC"},
     "bbc.co.uk": {"role": "fact_layer", "tier": "tier1", "name": "BBC"},
-    "ft.com": {"role": "context_layer", "tier": "tier1", "name": "Financial Times"},
-    "economist.com": {"role": "context_layer", "tier": "tier1", "name": "The Economist"},
+    "ft.com": {
+      "role": "context_layer",
+      "tier": "tier1",
+      "name": "Financial Times",
+      "can_confirm_fact": true,
+      "can_confirm_sensitive": false
+    },
+    "economist.com": {
+      "role": "context_layer",
+      "tier": "tier1",
+      "name": "The Economist",
+      "can_confirm_fact": false,
+      "can_confirm_sensitive": false,
+      "counts_as_independent_confirmation": false
+    },
     "theguardian.com": {"role": "context_layer", "tier": "tier2", "name": "The Guardian"},
     "interfax.ru": {"role": "russian_institutional_frame", "tier": "tier2", "name": "Interfax"},
     "kommersant.ru": {"role": "russian_institutional_frame", "tier": "tier2", "name": "Kommersant"},

@@ -673,7 +673,10 @@ class HorizonPipelineService:
             orchestrator._classify_personal_source_metadata(items)
             important_items, personal_excluded = select_personal_important_items(
                 items,
-                checker=EvidenceChecker(ctx.config.filtering.time_window_hours),
+                checker=EvidenceChecker(
+                    ctx.config.filtering.time_window_hours,
+                    high_confidence_requires_supporting_source=self._high_confidence_requires_supporting_source(ctx.config),
+                ),
                 min_importance=ctx.config.personal_briefing.min_importance,
                 min_importance_priority_topics=ctx.config.personal_briefing.min_importance_priority_topics,
                 require_dates=ctx.config.personal_briefing.require_dates,
@@ -692,7 +695,10 @@ class HorizonPipelineService:
             if self._personal_briefing_enabled(ctx.config):
                 important_items, retracked = select_personal_important_items(
                     important_items,
-                    checker=EvidenceChecker(ctx.config.filtering.time_window_hours),
+                    checker=EvidenceChecker(
+                        ctx.config.filtering.time_window_hours,
+                        high_confidence_requires_supporting_source=self._high_confidence_requires_supporting_source(ctx.config),
+                    ),
                     min_importance=ctx.config.personal_briefing.min_importance,
                     min_importance_priority_topics=ctx.config.personal_briefing.min_importance_priority_topics,
                     require_dates=ctx.config.personal_briefing.require_dates,
@@ -940,7 +946,11 @@ class HorizonPipelineService:
             summary = self._render_personal_summary(renderer, date_str, summary_items, tracked=[], context=summary_context)
             critic_config = ctx.config.personal_briefing.critic_pass
             if critic_config.enabled:
-                critic = ctx.runtime.run_briefing_critic(summary, summary_items)
+                critic = ctx.runtime.run_briefing_critic(
+                    summary,
+                    summary_items,
+                    high_confidence_requires_supporting_source=self._high_confidence_requires_supporting_source(ctx.config),
+                )
                 if (not critic.passed) and critic_config.auto_revise_once:
                     revised_items = drop_items_flagged_by_critic(summary_items, critic)
                     if len(revised_items) < len(summary_items):
@@ -953,7 +963,11 @@ class HorizonPipelineService:
                             tracked=[],
                             context=summary_context,
                         )
-                        critic = ctx.runtime.run_briefing_critic(summary, summary_items)
+                        critic = ctx.runtime.run_briefing_critic(
+                            summary,
+                            summary_items,
+                            high_confidence_requires_supporting_source=self._high_confidence_requires_supporting_source(ctx.config),
+                        )
                 if not critic.passed:
                     failed = summary + "\n\n## Предупреждения аудита\n" + "\n".join(
                         [f"- {issue}" for issue in critic.critical_issues]
@@ -1301,6 +1315,12 @@ class HorizonPipelineService:
     def _priority_topics(config: Any) -> set[str]:
         personal = getattr(config, "personal_briefing", None)
         return {str(topic) for topic in getattr(personal, "priority_topics", [])}
+
+    @staticmethod
+    def _high_confidence_requires_supporting_source(config: Any) -> bool:
+        personal = getattr(config, "personal_briefing", None)
+        corroboration = getattr(personal, "corroboration", None)
+        return bool(getattr(corroboration, "high_confidence_requires_supporting_source", True))
 
     @staticmethod
     def _uses_personal_summary(config: Any, language: str) -> bool:

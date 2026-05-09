@@ -10,6 +10,7 @@ from src.horizon_ext.personal import (
     PersonalBriefingRenderer,
     SourcePolicyClassifier,
     conservative_default_policy,
+    detect_sensitive_topic,
     load_source_policy,
     run_briefing_critic,
     prefilter_personal_candidates,
@@ -87,6 +88,37 @@ def test_policy_load_and_override(tmp_path):
     assert policy.source_domain_rules["reuters.com"]["role"] == "context_layer"
 
 
+def test_policy_override_can_disable_fact_confirmation(tmp_path):
+    p = tmp_path / "policy.json"
+    p.write_text(
+        json.dumps(
+            {
+                "source_domain_rules": {
+                    "example.com": {
+                        "role": "fact_layer",
+                        "tier": "tier1",
+                        "name": "Example",
+                        "can_confirm_fact": False,
+                    }
+                }
+            }
+        ),
+        encoding="utf-8",
+    )
+    policy, error = load_source_policy(str(p))
+    assert error == ""
+    item = mk_item("https://example.com/report")
+    item.metadata.update(SourcePolicyClassifier(policy).classify(item))
+    item.metadata.update({"claim_type": "confirmed_fact", "confidence": "high"})
+
+    EvidenceChecker().audit_item(item)
+
+    assert item.metadata["can_confirm_fact"] is False
+    assert item.metadata["counts_as_independent_confirmation"] is False
+    assert item.metadata["claim_type"] == "unverified_report"
+    assert "source policy does not allow confirmed_fact" in item.metadata["unsupported_claims"]
+
+
 @pytest.mark.parametrize(
     ("item", "role", "source_name", "notes"),
     [
@@ -159,6 +191,9 @@ def test_discovery_link_uses_canonical_evidence_but_not_confirmation():
     assert telegram.metadata["source_role"] == "fact_layer"
     assert telegram.metadata["discovery_source_type"] == "telegram"
     assert telegram.metadata["discovery_url"] == "https://t.me/channel/1"
+    assert telegram.metadata["discovery_counts_as_confirmation"] is False
+    assert telegram.metadata["evidence_source_domain"] == "reuters.com"
+    assert telegram.metadata["evidence_fetch_status"] == "linked_only"
     assert telegram.metadata["counts_as_independent_confirmation"] is False
 
 
@@ -176,9 +211,10 @@ def test_discovery_post_without_trusted_external_url_is_excluded():
     assert excluded[0]["discovery_source_type"] == "telegram"
 
 
-def test_sensitive_keyword_and_corroboration_downgrade():
+@pytest.mark.parametrize("domain", ["interfax.ru", "rbc.ru", "kommersant.ru"])
+def test_sensitive_russian_institutional_corroboration_downgrade(domain):
     checker = EvidenceChecker(time_window_hours=24)
-    item = mk_item("https://interfax.ru/a", title="Sanctions and war update")
+    item = mk_item(f"https://{domain}/a", title="Sanctions and war update")
     item.metadata.update({
         "source_role": "russian_institutional_frame",
         "claim_type": "confirmed_fact",
@@ -192,6 +228,30 @@ def test_sensitive_keyword_and_corroboration_downgrade():
     assert item.metadata["claim_type"] == "party_claim"
     assert item.metadata["confidence"] == "medium"
     assert item.metadata["corroboration"]["passed"] is False
+
+
+@pytest.mark.parametrize(
+    "title",
+    [
+        "БПЛА атаковал объект",
+        "ВСУ сообщили об обстреле",
+        "Минобороны и МО РФ выпустили заявление",
+        "иноагент и нежелательная организация оспорили решение",
+        "Russia-Ukraine battlefield update reports casualties",
+    ],
+)
+def test_sensitive_detector_matches_required_terms(title):
+    assert detect_sensitive_topic(mk_item("https://example.com/a", title=title)) is True
+
+
+def test_sensitive_detector_does_not_match_cybersecurity_security_release():
+    item = mk_item(
+        "https://github.com/org/repo/releases/tag/v1",
+        title="Open source cybersecurity security release",
+        content="This release fixes memory safety bugs in a library.",
+    )
+
+    assert detect_sensitive_topic(item) is False
 
 
 def test_evidence_checker_required_downgrades():
@@ -275,6 +335,24 @@ def test_evidence_checker_caps_high_without_supporting_confirmation():
     assert item.metadata["evidence_strength"] == "medium"
     assert "high confidence requires independent supporting source" in item.metadata["unsupported_claims"]
     assert "confidence capped" in item.metadata["source_policy_notes"]
+
+
+def test_high_confidence_gate_can_be_disabled_by_config():
+    checker = EvidenceChecker(time_window_hours=24, high_confidence_requires_supporting_source=False)
+    classifier = SourcePolicyClassifier(conservative_default_policy())
+    item = mk_item("https://reuters.com/world/a")
+    item.metadata.update(classifier.classify(item))
+    item.metadata.update({
+        "claim_type": "confirmed_fact",
+        "confidence": "high",
+        "evidence_strength": "high",
+    })
+
+    checker.audit_item(item)
+    CorroborationGate({"high_confidence_requires_supporting_source": False}).apply([item])
+
+    assert item.metadata["claim_type"] == "confirmed_fact"
+    assert item.metadata["confidence"] == "high"
 
 
 def test_evidence_checker_prevents_discovery_link_confirmed_fact():

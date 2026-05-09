@@ -217,6 +217,7 @@ class PersonalBriefingCriticConfig(StrictModel):
 class CorroborationConfig(StrictModel):
     enabled: bool = True
     sensitive_requires_independent_confirmation: bool = True
+    high_confidence_requires_supporting_source: bool = True
     min_independent_confirmations: int = Field(default=1, ge=0, le=5)
     confirming_roles: List[str] = Field(
         default_factory=lambda: [

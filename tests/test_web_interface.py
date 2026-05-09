@@ -36,6 +36,48 @@ def write_config(tmp_path: Path, config: Config | None = None) -> Path:
     return config_path
 
 
+def test_policy_settings_page_saves_controls_and_has_no_telegram_handling(tmp_path: Path) -> None:
+    from fastapi.testclient import TestClient
+
+    config_path = write_config(tmp_path)
+    app = create_app(config_path=str(config_path), data_dir=str(tmp_path))
+    client = TestClient(app)
+
+    response = client.get("/settings/policy")
+    assert response.status_code == 200
+    assert 'name="telegram_handling"' not in response.text
+    assert "source policy JSON" in response.text
+
+    save = client.post(
+        "/settings/policy",
+        data={
+            "personal_enabled": "on",
+            "policy_preset": "personal-media",
+            "source_policy_file": "data/source-policy.personal-media.example.json",
+            "corroboration_enabled": "on",
+            "sensitive_requires_confirmation": "on",
+            "min_independent_confirmations": "1",
+            "disable_sensitive_enrichment": "on",
+            "filter_enrichment_results": "on",
+            "selection_caps_enabled": "on",
+            "max_sensitive_statement_items": "3",
+        },
+    )
+
+    assert save.status_code == 200
+    assert "Policy settings saved." in save.text
+    saved = Config.model_validate_json(config_path.read_text(encoding="utf-8"))
+    assert saved.personal_briefing.enabled is True
+    assert saved.personal_briefing.source_policy_file == "data/source-policy.personal-media.example.json"
+    assert saved.personal_briefing.corroboration.enabled is True
+    assert saved.personal_briefing.corroboration.sensitive_requires_independent_confirmation is True
+    assert saved.personal_briefing.corroboration.min_independent_confirmations == 1
+    assert saved.personal_briefing.enrichment.disable_for_sensitive_topics is True
+    assert saved.personal_briefing.enrichment.filter_search_results_by_source_policy is True
+    assert saved.personal_briefing.selection_caps.enabled is True
+    assert saved.personal_briefing.selection_caps.max_sensitive_statement_items == 3
+
+
 def test_basic_settings_form_validates_and_sets_backup_fields() -> None:
     config = load_example_config()
     updated = apply_basic_settings(

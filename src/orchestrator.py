@@ -230,7 +230,12 @@ class HorizonOrchestrator:
 
             filter_timer = self.verbose_reporter.start("filter", input_items=len(analyzed_items))
             if self.config.personal_briefing.enabled:
-                checker = EvidenceChecker(self.config.filtering.time_window_hours)
+                checker = EvidenceChecker(
+                    self.config.filtering.time_window_hours,
+                    high_confidence_requires_supporting_source=(
+                        self.config.personal_briefing.corroboration.high_confidence_requires_supporting_source
+                    ),
+                )
                 important_items, posttracked = select_personal_important_items(
                     analyzed_items,
                     checker=checker,
@@ -277,7 +282,12 @@ class HorizonOrchestrator:
             important_items = deduped_items
             if self.config.personal_briefing.enabled and important_items:
                 reaudit_timer = self.verbose_reporter.start("personal.reaudit", input_items=len(important_items))
-                checker = EvidenceChecker(self.config.filtering.time_window_hours)
+                checker = EvidenceChecker(
+                    self.config.filtering.time_window_hours,
+                    high_confidence_requires_supporting_source=(
+                        self.config.personal_briefing.corroboration.high_confidence_requires_supporting_source
+                    ),
+                )
                 important_items, retracked = select_personal_important_items(
                     important_items,
                     checker=checker,
@@ -393,7 +403,13 @@ class HorizonOrchestrator:
                     summary = personal_renderer.render(today, summary_items, tracked=tracked_excluded[:10], context=summary_context)
                     if self.config.personal_briefing.critic_pass.enabled:
                         critic_timer = self.verbose_reporter.start("personal.critic", language=lang, items=len(summary_items))
-                        critic = run_briefing_critic(summary, summary_items)
+                        critic = run_briefing_critic(
+                            summary,
+                            summary_items,
+                            high_confidence_requires_supporting_source=(
+                                self.config.personal_briefing.corroboration.high_confidence_requires_supporting_source
+                            ),
+                        )
                         if (not critic.passed) and self.config.personal_briefing.critic_pass.auto_revise_once:
                             revised_items = drop_items_flagged_by_critic(summary_items, critic)
                             if len(revised_items) < len(summary_items):
@@ -404,7 +420,13 @@ class HorizonOrchestrator:
                                 summary_items = revised_items
                                 summary_context["selected_count"] = len(summary_items)
                                 summary = personal_renderer.render(today, summary_items, tracked=tracked_excluded[:10], context=summary_context)
-                                critic = run_briefing_critic(summary, summary_items)
+                                critic = run_briefing_critic(
+                                    summary,
+                                    summary_items,
+                                    high_confidence_requires_supporting_source=(
+                                        self.config.personal_briefing.corroboration.high_confidence_requires_supporting_source
+                                    ),
+                                )
                         self.verbose_reporter.end(
                             "personal.critic",
                             critic_timer,

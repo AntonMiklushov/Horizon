@@ -41,10 +41,15 @@ ALLOWED_TOPICS = {
 SENSITIVE_TOPIC_RE = re.compile(
     r"\b("
     r"war|invasion|combat|missile|drone|attack|sanction|sanctions|election|protest|riot|"
-    r"arrest|detention|terror|terrorism|mobilization|security|coup|hostage|explosion|"
+    r"arrest|detention|terror|terrorism|mobilization|coup|hostage|explosion|"
+    r"ukraine|russia-ukraine|battlefield|casualty|casualties|shelling|occupied|occupation|"
+    r"killed|wounded|prisoner|conscription|"
     r"войн[а-я]*|вторжен[а-я]*|боев[а-я]*|ракет[а-я]*|дрон[а-я]*|атак[а-я]*|"
     r"санкци[а-я]*|выбор[а-я]*|протест[а-я]*|митинг[а-я]*|арест[а-я]*|задержан[а-я]*|"
-    r"террор[а-я]*|теракт[а-я]*|мобилизаци[а-я]*|безопасност[а-я]*|переворот[а-я]*|заложник[а-я]*|взрыв[а-я]*"
+    r"террор[а-я]*|теракт[а-я]*|мобилизаци[а-я]*|переворот[а-я]*|заложник[а-я]*|взрыв[а-я]*|"
+    r"бпла|всу|сво|минобороны|мо\s+рф|фсб|росгвард[а-я]*|фронт[а-я]*|обстрел[а-я]*|"
+    r"погиб[а-я]*|ранен[а-я]*|потер[а-я]*|пленн[а-я]*|мобилизован[а-я]*|"
+    r"иноагент[а-я]*|нежелательн[а-я]*|дискредитац[а-я]*"
     r")\b",
     re.IGNORECASE,
 )
@@ -114,6 +119,7 @@ class CorroborationConfig(BaseModel):
 
     enabled: bool = True
     sensitive_requires_independent_confirmation: bool = True
+    high_confidence_requires_supporting_source: bool = True
     min_independent_confirmations: int = Field(default=1, ge=0, le=5)
     confirming_roles: List[str] = Field(default_factory=lambda: sorted(CONFIRMING_SOURCE_ROLES))
 
@@ -155,8 +161,21 @@ def conservative_default_policy() -> SourcePolicy:
         "reuters.com": {"role": "fact_layer", "tier": "tier1", "name": "Reuters"},
         "reutersagency.com": {"role": "fact_layer", "tier": "tier1", "name": "Reuters"},
         "apnews.com": {"role": "fact_layer", "tier": "tier1", "name": "Associated Press"},
-        "ft.com": {"role": "context_layer", "tier": "tier1", "name": "Financial Times"},
-        "economist.com": {"role": "context_layer", "tier": "tier1", "name": "The Economist"},
+        "ft.com": {
+            "role": "context_layer",
+            "tier": "tier1",
+            "name": "Financial Times",
+            "can_confirm_fact": True,
+            "can_confirm_sensitive": False,
+        },
+        "economist.com": {
+            "role": "context_layer",
+            "tier": "tier1",
+            "name": "The Economist",
+            "can_confirm_fact": False,
+            "can_confirm_sensitive": False,
+            "counts_as_independent_confirmation": False,
+        },
         "bbc.com": {"role": "fact_layer", "tier": "tier1", "name": "BBC"},
         "bbc.co.uk": {"role": "fact_layer", "tier": "tier1", "name": "BBC"},
         "theguardian.com": {"role": "context_layer", "tier": "tier2", "name": "The Guardian"},
@@ -273,6 +292,9 @@ def _tracked_exclusion(item: ContentItem, reason: str) -> Dict[str, Any]:
         "content_source_domain": meta.get("content_source_domain") or _domain(str(item.url)),
         "canonical_url": str(item.url),
         "discovery_url": meta.get("discovery_url") or _discovery_url(item),
+        "discovery_counts_as_confirmation": meta.get("discovery_counts_as_confirmation"),
+        "evidence_source_domain": meta.get("evidence_source_domain"),
+        "evidence_fetch_status": meta.get("evidence_fetch_status"),
         "policy_decision": meta.get("policy_decision", ""),
     }
 
@@ -326,6 +348,15 @@ class SourcePolicyClassifier:
             notes = _append_note(notes, "requires verification with paper, journal, or institution")
 
         can_confirm_fact, can_confirm_sensitive, independent = self._capabilities(role, is_discovery_source)
+        if rule:
+            can_confirm_fact, can_confirm_sensitive, independent = self._apply_capability_overrides(
+                rule,
+                can_confirm_fact,
+                can_confirm_sensitive,
+                independent,
+            )
+        if is_discovery_source:
+            independent = False
         if role in {"blocked_as_fact_source", "unclassified"}:
             policy_decision = "exclude_" + role
 
@@ -341,9 +372,13 @@ class SourcePolicyClassifier:
             "can_confirm_fact": can_confirm_fact,
             "can_confirm_sensitive": can_confirm_sensitive,
             "counts_as_independent_confirmation": independent,
+            "discovery_counts_as_confirmation": False if is_discovery_source else independent,
             "policy_decision": policy_decision,
             "source_role_reason": f"classified by discovery/canonical domain: {source_type}/{domain}",
         }
+        if is_discovery_source and is_external_link:
+            out["evidence_source_domain"] = domain
+            out["evidence_fetch_status"] = "linked_only"
         if out_name:
             out["source_name"] = out_name
         return out
@@ -380,6 +415,23 @@ class SourcePolicyClassifier:
         can_confirm_fact = role in CONFIRMING_SOURCE_ROLES
         can_confirm_sensitive = role == "fact_layer"
         independent = can_confirm_fact and not is_discovery_source and role != "social_primary_statement_only"
+        return can_confirm_fact, can_confirm_sensitive, independent
+
+    @staticmethod
+    def _apply_capability_overrides(
+        rule: SourceRule,
+        can_confirm_fact: bool,
+        can_confirm_sensitive: bool,
+        independent: bool,
+    ) -> tuple[bool, bool, bool]:
+        if rule.can_confirm_fact is not None:
+            can_confirm_fact = rule.can_confirm_fact
+        if rule.can_confirm_sensitive is not None:
+            can_confirm_sensitive = rule.can_confirm_sensitive
+        if rule.counts_as_independent_confirmation is not None:
+            independent = rule.counts_as_independent_confirmation
+        if not can_confirm_fact:
+            independent = False
         return can_confirm_fact, can_confirm_sensitive, independent
 
 
@@ -449,8 +501,14 @@ def _is_platform_domain(source_type: str, domain: str) -> bool:
 
 
 class EvidenceChecker:
-    def __init__(self, time_window_hours: int = 24):
+    def __init__(
+        self,
+        time_window_hours: int = 24,
+        *,
+        high_confidence_requires_supporting_source: bool = True,
+    ):
         self.time_window_hours = time_window_hours
+        self.high_confidence_requires_supporting_source = high_confidence_requires_supporting_source
 
     def audit_item(self, item: ContentItem) -> Dict[str, Any]:
         meta = item.metadata
@@ -568,7 +626,7 @@ class EvidenceChecker:
         if claim_type in {"official_statement", "party_claim"} and confidence == "high":
             confidence = "medium"
 
-        if confidence == "high" and not has_supporting_confirmation:
+        if self.high_confidence_requires_supporting_source and confidence == "high" and not has_supporting_confirmation:
             confidence = "medium"
             if meta.get("evidence_strength") == "high":
                 meta["evidence_strength"] = "medium"
@@ -726,7 +784,7 @@ class CorroborationGate:
             claim_type = _downgraded_claim_type_for_role(role)
             confidence = "medium" if confidence == "high" else confidence
             notes.append("sensitive item lacks independent sensitive confirmation")
-        if confidence == "high" and not supporting_confirming:
+        if self.config.high_confidence_requires_supporting_source and confidence == "high" and not supporting_confirming:
             confidence = "medium"
             notes.append("high confidence downgraded pending independent corroboration")
 
@@ -899,6 +957,9 @@ def source_policy_decisions(items: List[ContentItem], excluded: List[Dict[str, A
                 "can_confirm_fact": item.metadata.get("can_confirm_fact"),
                 "can_confirm_sensitive": item.metadata.get("can_confirm_sensitive"),
                 "counts_as_independent_confirmation": item.metadata.get("counts_as_independent_confirmation"),
+                "discovery_counts_as_confirmation": item.metadata.get("discovery_counts_as_confirmation"),
+                "evidence_source_domain": item.metadata.get("evidence_source_domain"),
+                "evidence_fetch_status": item.metadata.get("evidence_fetch_status"),
                 "policy_decision": item.metadata.get("policy_decision"),
                 "claim_type": item.metadata.get("claim_type"),
                 "confidence": item.metadata.get("confidence"),
@@ -1045,7 +1106,12 @@ class PersonalBriefingRenderer:
         ] + ([f"- Поддерживающие источники: {self._supporting_sources_text(m)}"] if m.get("supporting_sources") else []) + [""]
 
 
-def run_briefing_critic(markdown: str, items: List[ContentItem]) -> CriticResult:
+def run_briefing_critic(
+    markdown: str,
+    items: List[ContentItem],
+    *,
+    high_confidence_requires_supporting_source: bool = True,
+) -> CriticResult:
     critical, minor, edits = [], [], []
     if "date unknown" in markdown:
         minor.append("some items have unknown publication dates")
@@ -1083,7 +1149,7 @@ def run_briefing_critic(markdown: str, items: List[ContentItem]) -> CriticResult
             critical.append(f"confirmed_fact lacks source-policy authority for {it.id}")
         if sensitive and claim_type == "confirmed_fact" and (not can_confirm_sensitive or not independent or not supporting_confirmations):
             critical.append(f"sensitive confirmed_fact lacks independent sensitive confirmation for {it.id}")
-        if confidence == "high" and not supporting_confirmations:
+        if high_confidence_requires_supporting_source and confidence == "high" and not supporting_confirmations:
             critical.append(f"high confidence lacks independent supporting source for {it.id}")
         if not (it.metadata.get("source_url") or it.url):
             critical.append(f"missing source url for {it.id}")
