@@ -61,6 +61,15 @@ class ClaimType(str, Enum):
     PRIMARY_STATEMENT = "primary_statement"
 
 
+STATEMENT_CLAIM_TYPES = {
+    ClaimType.OFFICIAL_STATEMENT.value,
+    ClaimType.PARTY_CLAIM.value,
+    ClaimType.PRIMARY_STATEMENT.value,
+    ClaimType.MARKET_REACTION.value,
+    ClaimType.CORRECTION_OR_UPDATE.value,
+}
+
+
 class CriticResult(BaseModel):
     passed: bool = Field(alias="pass")
     critical_issues: List[str] = Field(default_factory=list)
@@ -390,6 +399,33 @@ def _normalize_confidence(value: Any) -> str:
     return normalized if normalized in {"low", "medium", "high"} else "medium"
 
 
+def _metadata_bool(meta: Dict[str, Any], key: str, default: bool) -> bool:
+    value = meta.get(key)
+    if value is None:
+        meta[key] = default
+        return default
+    return bool(value)
+
+
+def _append_unique(values: List[str], value: str) -> None:
+    if value and value not in values:
+        values.append(value)
+
+
+def _append_source_policy_note(meta: Dict[str, Any], note: str) -> None:
+    meta["source_policy_notes"] = _append_note(str(meta.get("source_policy_notes") or ""), note)
+
+
+def _downgraded_claim_type_for_role(role: str) -> str:
+    if role == "official_primary_source":
+        return ClaimType.OFFICIAL_STATEMENT.value
+    if role == "russian_institutional_frame":
+        return ClaimType.PARTY_CLAIM.value
+    if role in {"social_primary_statement_only", "primary_statement"}:
+        return ClaimType.PRIMARY_STATEMENT.value
+    return ClaimType.UNVERIFIED_REPORT.value
+
+
 def detect_sensitive_topic(item: ContentItem) -> bool:
     meta = item.metadata
     parts = [
@@ -422,14 +458,14 @@ class EvidenceChecker:
         confidence = _normalize_confidence(meta.get("confidence", "medium"))
         meta["topic"] = _normalize_topic(meta.get("topic", "other"))
         conflicts: List[str] = []
-        unsupported: List[str] = []
+        unsupported: List[str] = list(meta.get("unsupported_claims") or []) if isinstance(meta.get("unsupported_claims"), list) else []
         missing: List[str] = []
 
         role = meta.get("source_role", "unclassified")
         if role in {"blocked_as_fact_source", "unclassified"} and claim_type == ClaimType.CONFIRMED_FACT.value:
             claim_type = ClaimType.UNVERIFIED_REPORT.value
             confidence = "low"
-            unsupported.append("source policy does not allow confirmed_fact")
+            _append_unique(unsupported, "source policy does not allow confirmed_fact")
 
         if role == "science_preprint":
             note = "not peer-reviewed"
@@ -442,7 +478,7 @@ class EvidenceChecker:
                 claim_type = ClaimType.UNVERIFIED_REPORT.value
                 confidence = "low"
                 meta["evidence_strength"] = "low"
-                unsupported.append("preprint is not peer-reviewed")
+                _append_unique(unsupported, "preprint is not peer-reviewed")
             elif confidence == "high":
                 confidence = "medium"
 
@@ -457,7 +493,7 @@ class EvidenceChecker:
                 claim_type = ClaimType.UNVERIFIED_REPORT.value
                 confidence = "low"
                 meta["evidence_strength"] = "low"
-                unsupported.append("source finder is not independent confirmation")
+                _append_unique(unsupported, "source finder is not independent confirmation")
             elif confidence == "high":
                 confidence = "medium"
 
@@ -472,7 +508,7 @@ class EvidenceChecker:
             }:
                 claim_type = ClaimType.PRIMARY_STATEMENT.value
                 confidence = "low" if original_claim_type == ClaimType.CONFIRMED_FACT.value else ("medium" if confidence == "high" else confidence)
-                unsupported.append("social source downgraded to primary_statement")
+                _append_unique(unsupported, "social source downgraded to primary_statement")
 
         sensitive_auto = detect_sensitive_topic(item)
         meta["sensitive_topic_auto"] = sensitive_auto
@@ -483,14 +519,38 @@ class EvidenceChecker:
             role,
             str(meta.get("discovery_role", "")) == "discovery_signal",
         )
-        meta.setdefault("can_confirm_fact", can_confirm_fact)
-        meta.setdefault("can_confirm_sensitive", can_confirm_sensitive)
-        meta.setdefault("counts_as_independent_confirmation", independent)
+        can_confirm_fact = _metadata_bool(meta, "can_confirm_fact", can_confirm_fact)
+        can_confirm_sensitive = _metadata_bool(meta, "can_confirm_sensitive", can_confirm_sensitive)
+        independent = _metadata_bool(meta, "counts_as_independent_confirmation", independent)
+        has_supporting_confirmation = bool(_supporting_confirmation_sources(item, sensitive=sensitive))
+
+        if claim_type == ClaimType.CONFIRMED_FACT.value and (
+            role in {"blocked_as_fact_source", "unclassified"}
+            or not can_confirm_fact
+            or not independent
+            or str(meta.get("discovery_role", "")) == "discovery_signal"
+        ):
+            claim_type = _downgraded_claim_type_for_role(role)
+            confidence = "low" if role in {"blocked_as_fact_source", "unclassified"} else ("medium" if confidence == "high" else confidence)
+            _append_unique(unsupported, "source policy does not allow confirmed_fact")
+            _append_source_policy_note(meta, "downgraded because source cannot independently confirm facts")
+
+        if sensitive and (
+            not can_confirm_sensitive
+            or not independent
+            or not has_supporting_confirmation
+        ):
+            if claim_type == ClaimType.CONFIRMED_FACT.value:
+                claim_type = _downgraded_claim_type_for_role(role)
+            if confidence == "high":
+                confidence = "medium"
+            _append_unique(unsupported, "sensitive topic lacks independent sensitive confirmation")
+            _append_source_policy_note(meta, "downgraded because sensitive topic lacks independent confirmation")
 
         if sensitive and role == "russian_institutional_frame" and claim_type == ClaimType.CONFIRMED_FACT.value:
             claim_type = ClaimType.PARTY_CLAIM.value
             confidence = "medium" if confidence == "high" else confidence
-            unsupported.append("sensitive claim downgraded for russian institutional source")
+            _append_unique(unsupported, "sensitive claim downgraded for russian institutional source")
         if sensitive and role == "official_primary_source" and claim_type == ClaimType.CONFIRMED_FACT.value:
             claim_type = ClaimType.OFFICIAL_STATEMENT.value
             confidence = "medium" if confidence == "high" else confidence
@@ -507,6 +567,13 @@ class EvidenceChecker:
 
         if claim_type in {"official_statement", "party_claim"} and confidence == "high":
             confidence = "medium"
+
+        if confidence == "high" and not has_supporting_confirmation:
+            confidence = "medium"
+            if meta.get("evidence_strength") == "high":
+                meta["evidence_strength"] = "medium"
+            _append_unique(unsupported, "high confidence requires independent supporting source")
+            _append_source_policy_note(meta, "confidence capped until corroborated by an independent supporting source")
 
         meta.update({
             "claim_type": claim_type,
@@ -626,6 +693,11 @@ class CorroborationGate:
         confidence = _normalize_confidence(meta.get("confidence", "medium"))
         sensitive = bool(meta.get("sensitive_topic")) or bool(meta.get("sensitive_topic_auto"))
         confirming = self._confirming_sources(item, sensitive=sensitive)
+        supporting_confirming = _supporting_confirmation_sources(
+            item,
+            sensitive=sensitive,
+            confirming_roles=set(self.config.confirming_roles),
+        )
         required = (
             self.config.min_independent_confirmations
             if sensitive and self.config.sensitive_requires_independent_confirmation
@@ -633,6 +705,14 @@ class CorroborationGate:
         )
         passed = len(confirming) >= required
         notes: List[str] = []
+
+        can_confirm_fact = bool(meta.get("can_confirm_fact"))
+        can_confirm_sensitive = bool(meta.get("can_confirm_sensitive"))
+        independent = bool(meta.get("counts_as_independent_confirmation"))
+        if claim_type == ClaimType.CONFIRMED_FACT.value and (not can_confirm_fact or not independent):
+            claim_type = _downgraded_claim_type_for_role(role)
+            confidence = "low" if role in {"blocked_as_fact_source", "unclassified"} else ("medium" if confidence == "high" else confidence)
+            notes.append("source policy does not allow confirmed_fact")
 
         if sensitive and role == "russian_institutional_frame" and claim_type == ClaimType.CONFIRMED_FACT.value and not passed:
             claim_type = ClaimType.PARTY_CLAIM.value
@@ -642,7 +722,11 @@ class CorroborationGate:
             claim_type = ClaimType.OFFICIAL_STATEMENT.value
             confidence = "medium" if confidence == "high" else confidence
             notes.append("sensitive official source lacks external confirmation")
-        if sensitive and claim_type == ClaimType.CONFIRMED_FACT.value and confidence == "high" and not passed:
+        if sensitive and claim_type == ClaimType.CONFIRMED_FACT.value and (not passed or not can_confirm_sensitive or not supporting_confirming):
+            claim_type = _downgraded_claim_type_for_role(role)
+            confidence = "medium" if confidence == "high" else confidence
+            notes.append("sensitive item lacks independent sensitive confirmation")
+        if confidence == "high" and not supporting_confirming:
             confidence = "medium"
             notes.append("high confidence downgraded pending independent corroboration")
 
@@ -676,11 +760,10 @@ class CorroborationGate:
         return sources
 
     def _counts(self, payload: Dict[str, Any], *, sensitive: bool) -> bool:
-        return bool(
-            payload.get("counts_as_independent_confirmation")
-            and payload.get("can_confirm_fact")
-            and (not sensitive or payload.get("can_confirm_sensitive"))
-            and payload.get("source_role") in set(self.config.confirming_roles)
+        return _confirmation_payload_counts(
+            payload,
+            sensitive=sensitive,
+            confirming_roles=set(self.config.confirming_roles),
         )
 
 
@@ -724,6 +807,37 @@ def _same_confirmation_source(payload: Dict[str, Any], existing: List[Dict[str, 
     domain = payload.get("content_source_domain")
     url = payload.get("source_url")
     return any(src.get("content_source_domain") == domain or src.get("source_url") == url for src in existing)
+
+
+def _confirmation_payload_counts(
+    payload: Dict[str, Any],
+    *,
+    sensitive: bool,
+    confirming_roles: set[str] | None = None,
+) -> bool:
+    roles = confirming_roles or CONFIRMING_SOURCE_ROLES
+    return bool(
+        payload.get("counts_as_independent_confirmation")
+        and payload.get("can_confirm_fact")
+        and (not sensitive or payload.get("can_confirm_sensitive"))
+        and payload.get("source_role") in roles
+    )
+
+
+def _supporting_confirmation_sources(
+    item: ContentItem,
+    *,
+    sensitive: bool,
+    confirming_roles: set[str] | None = None,
+) -> List[Dict[str, Any]]:
+    sources: List[Dict[str, Any]] = []
+    for raw in item.metadata.get("supporting_sources", []):
+        if not isinstance(raw, dict):
+            continue
+        payload = _supporting_confirmation_payload(raw)
+        if _confirmation_payload_counts(payload, sensitive=sensitive, confirming_roles=confirming_roles):
+            sources.append(payload)
+    return sources
 
 
 def apply_personal_selection_caps(
@@ -786,6 +900,10 @@ def source_policy_decisions(items: List[ContentItem], excluded: List[Dict[str, A
                 "can_confirm_sensitive": item.metadata.get("can_confirm_sensitive"),
                 "counts_as_independent_confirmation": item.metadata.get("counts_as_independent_confirmation"),
                 "policy_decision": item.metadata.get("policy_decision"),
+                "claim_type": item.metadata.get("claim_type"),
+                "confidence": item.metadata.get("confidence"),
+                "source_policy_notes": item.metadata.get("source_policy_notes"),
+                "unsupported_claims": item.metadata.get("unsupported_claims"),
                 "corroboration": item.metadata.get("corroboration"),
                 "sensitive_topic_auto": item.metadata.get("sensitive_topic_auto"),
                 "enrichment_skipped": item.metadata.get("enrichment_skipped"),
@@ -820,9 +938,27 @@ class PersonalBriefingRenderer:
         "low significance": "низкая значимость",
     }
 
-    def render(self, date: str, items: List[ContentItem], tracked: Optional[List[Dict[str, str]]] = None) -> str:
+    def render(
+        self,
+        date: str,
+        items: List[ContentItem],
+        tracked: Optional[List[Dict[str, str]]] = None,
+        context: Optional[Dict[str, Any]] = None,
+    ) -> str:
+        context = context or {}
         if not items:
             lines = [f"# Сводка — {date}", "", "Сегодня нет событий, которые проходят заданный порог значимости и доказательности."]
+            context_lines = []
+            if context.get("total_fetched") is not None:
+                context_lines.append(f"- Получено: {context['total_fetched']}")
+            if context.get("source_items") is not None:
+                context_lines.append(f"- Проверено на этапе отбора: {context['source_items']}")
+            if context.get("selected_count") is not None:
+                context_lines.append(f"- Прошло в итоговую сводку: {context['selected_count']}")
+            if context.get("threshold") is not None:
+                context_lines.append(f"- Порог значимости: {context['threshold']}")
+            if context_lines:
+                lines += ["", "## Контекст отбора"] + context_lines
             if tracked:
                 lines += ["", "## Отслеживалось, но не включено"] + [
                     f"- {t['item']} — причина: {self.REASON_LABELS.get(t['reason'], t['reason'])}"
@@ -830,7 +966,14 @@ class PersonalBriefingRenderer:
                 ]
             return "\n".join(lines)
 
-        highs = [i for i in items if i.metadata.get("confidence") != "low"]
+        non_low = [i for i in items if i.metadata.get("confidence") != "low"]
+        statements = [
+            i
+            for i in non_low
+            if _normalize_claim_type(i.metadata.get("claim_type")) in STATEMENT_CLAIM_TYPES
+        ]
+        statement_ids = {i.id for i in statements}
+        highs = [i for i in non_low if i.id not in statement_ids]
         disputed = [i for i in items if i.metadata.get("confidence") == "low"]
         out = [f"# Сводка — {date}", ""]
 
@@ -852,6 +995,10 @@ class PersonalBriefingRenderer:
                 out += self._card(it)
                 rendered_ids.add(it.id)
 
+        if statements:
+            out += ["", "## Заявления и сообщения, требующие контекста"]
+            for it in statements:
+                out += self._card(it)
         if disputed:
             out += ["", "## Спорные / слабоподтверждённые сообщения"]
             for it in disputed:
@@ -882,6 +1029,9 @@ class PersonalBriefingRenderer:
         conf = m.get("confidence", "low" if not item.published_at else "medium")
         confirmed = "; ".join(m.get("confirmed_details", [])) if isinstance(m.get("confirmed_details"), list) else str(m.get("confirmed_details", ""))
         claims = "; ".join(m.get("who_claims", [])) if isinstance(m.get("who_claims"), list) else str(m.get("who_claims", ""))
+        independent = "да" if m.get("counts_as_independent_confirmation") else "нет"
+        sensitive_ok = "да" if m.get("can_confirm_sensitive") else "нет"
+        policy_decision = m.get("policy_decision") or "unknown"
         return [
             f"### {item.title}",
             f"- Что произошло: {m.get('summary', item.ai_summary or item.title)}",
@@ -890,6 +1040,7 @@ class PersonalBriefingRenderer:
             f"- Оценка доказательств: {m.get('evidence_strength', 'low')}",
             f"- Почему важно: {m.get('why_it_matters', item.ai_reason or '')}",
             f"- Уверенность: {conf}",
+            f"- Политика источника: роль {self._role_label(m.get('source_role', 'unclassified'))}; решение {policy_decision}; независимое подтверждение: {independent}; чувствительные факты: {sensitive_ok}",
             f"- Источники: {m.get('source_name', item.source_type.value)} ({self._role_label(m.get('source_role', 'unclassified'))}), {date}, {item.url}",
         ] + ([f"- Поддерживающие источники: {self._supporting_sources_text(m)}"] if m.get("supporting_sources") else []) + [""]
 
@@ -900,24 +1051,45 @@ def run_briefing_critic(markdown: str, items: List[ContentItem]) -> CriticResult
         minor.append("some items have unknown publication dates")
     card_count = markdown.count("### ")
     expected_cards = len(set([i.id for i in items]))
+    if not items:
+        empty_markers = ("нет событий", "Прошло в итоговую сводку: 0", "no items passed")
+        if not any(marker in markdown for marker in empty_markers):
+            critical.append("empty summary does not explain that no items passed selection")
+        if critical:
+            edits.append("revise empty summary context")
+        return CriticResult.model_validate({"pass": not critical, "critical_issues": critical, "minor_issues": minor, "required_edits": edits})
     if card_count < expected_cards:
         critical.append("missing cards detected")
     elif card_count > expected_cards:
         critical.append("duplicate cards detected")
     for it in items:
-        if it.metadata.get("source_role") in {"blocked_as_fact_source", "unclassified"} and it.metadata.get("claim_type") == "confirmed_fact":
+        role = str(it.metadata.get("source_role", "unclassified"))
+        claim_type = _normalize_claim_type(it.metadata.get("claim_type"))
+        confidence = _normalize_confidence(it.metadata.get("confidence"))
+        sensitive = bool(it.metadata.get("sensitive_topic")) or bool(it.metadata.get("sensitive_topic_auto"))
+        can_confirm_fact = bool(it.metadata.get("can_confirm_fact"))
+        can_confirm_sensitive = bool(it.metadata.get("can_confirm_sensitive"))
+        independent = bool(it.metadata.get("counts_as_independent_confirmation"))
+        supporting_confirmations = _supporting_confirmation_sources(it, sensitive=sensitive)
+        if role in {"blocked_as_fact_source", "unclassified"} and claim_type == "confirmed_fact":
             critical.append(f"source_role violation for {it.id}")
-        if it.metadata.get("source_role") in {"blocked_as_fact_source", "unclassified"} and it.metadata.get("confidence") != "low":
+        if role in {"blocked_as_fact_source", "unclassified"} and confidence != "low":
             critical.append(f"invalid main-section source role for {it.id}")
-        if it.metadata.get("source_role") == "social_primary_statement_only" and it.metadata.get("claim_type") == "confirmed_fact":
+        if role == "social_primary_statement_only" and claim_type == "confirmed_fact":
             critical.append(f"social confirmed_fact violation for {it.id}")
-        if it.metadata.get("source_role") == "russian_institutional_frame" and it.metadata.get("sensitive_topic") and it.metadata.get("claim_type") == "confirmed_fact":
+        if role == "russian_institutional_frame" and sensitive and claim_type == "confirmed_fact":
             critical.append(f"sensitive russian institutional claim not downgraded for {it.id}")
-        if not it.metadata.get("source_url"):
+        if claim_type == "confirmed_fact" and (not can_confirm_fact or not independent):
+            critical.append(f"confirmed_fact lacks source-policy authority for {it.id}")
+        if sensitive and claim_type == "confirmed_fact" and (not can_confirm_sensitive or not independent or not supporting_confirmations):
+            critical.append(f"sensitive confirmed_fact lacks independent sensitive confirmation for {it.id}")
+        if confidence == "high" and not supporting_confirmations:
+            critical.append(f"high confidence lacks independent supporting source for {it.id}")
+        if not (it.metadata.get("source_url") or it.url):
             critical.append(f"missing source url for {it.id}")
-        if not it.published_at and it.metadata.get("confidence") != "low":
+        if not it.published_at and confidence != "low":
             critical.append(f"missing date must imply low confidence for {it.id}")
-        if it.metadata.get("confidence") == "low" and "## Спорные / слабоподтверждённые сообщения" not in markdown:
+        if confidence == "low" and "## Спорные / слабоподтверждённые сообщения" not in markdown:
             critical.append("low confidence item shown outside disputed section")
     if critical:
         edits.append("revise sections and evidence labels")

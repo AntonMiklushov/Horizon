@@ -753,7 +753,37 @@ def _source_policy_decisions(service: HorizonPipelineService, run_id: str) -> di
         payload = service.run_store.read_json(run_id, "source_policy_decisions.json")
     except Exception:
         return None
-    return payload if isinstance(payload, dict) else None
+    if not isinstance(payload, dict):
+        return None
+    payload = dict(payload)
+    payload["summary"] = _source_policy_decision_summary(payload)
+    return payload
+
+
+def _source_policy_decision_summary(payload: dict[str, Any]) -> dict[str, int]:
+    items = payload.get("items") if isinstance(payload.get("items"), list) else []
+    excluded = payload.get("excluded") if isinstance(payload.get("excluded"), list) else []
+    decisions = [item for item in [*items, *excluded] if isinstance(item, dict)]
+    unclassified = sum(1 for item in decisions if item.get("source_role") == "unclassified")
+    downgraded = 0
+    for item in decisions:
+        text = " ".join(
+            str(value)
+            for value in (
+                item.get("policy_decision"),
+                item.get("source_policy_notes"),
+                item.get("unsupported_claims"),
+                (item.get("corroboration") or {}).get("notes") if isinstance(item.get("corroboration"), dict) else "",
+            )
+        ).lower()
+        if "downgrad" in text or "lacks independent" in text:
+            downgraded += 1
+    return {
+        "total": len(decisions),
+        "excluded": len(excluded),
+        "unclassified": unclassified,
+        "downgraded": downgraded,
+    }
 
 
 def _render(request: Request, template_name: str, status_code: int = 200, **context: Any) -> HTMLResponse:

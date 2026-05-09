@@ -702,7 +702,7 @@ class HorizonPipelineService:
         after_topic_dedup = len(important_items)
 
         if self._personal_briefing_enabled(ctx.config):
-            CorroborationGate(ctx.config.personal_briefing.corroboration).apply(important_items)
+            CorroborationGate(getattr(ctx.config.personal_briefing, "corroboration", None)).apply(important_items)
 
         important_items, diversity_excluded = apply_source_diversity(
             important_items,
@@ -712,7 +712,7 @@ class HorizonPipelineService:
         if self._personal_briefing_enabled(ctx.config):
             important_items, cap_excluded = apply_personal_selection_caps(
                 important_items,
-                ctx.config.personal_briefing.selection_caps,
+                getattr(ctx.config.personal_briefing, "selection_caps", None),
             )
             personal_excluded.extend(cap_excluded)
 
@@ -931,7 +931,13 @@ class HorizonPipelineService:
 
         if self._uses_personal_summary(ctx.config, language):
             renderer = ctx.runtime.PersonalBriefingRenderer()
-            summary = renderer.render(date_str, summary_items, tracked=[])
+            summary_context = {
+                "total_fetched": total_fetched,
+                "source_items": len(items),
+                "selected_count": len(summary_items),
+                "threshold": getattr(getattr(ctx.config, "filtering", None), "ai_score_threshold", None),
+            }
+            summary = self._render_personal_summary(renderer, date_str, summary_items, tracked=[], context=summary_context)
             critic_config = ctx.config.personal_briefing.critic_pass
             if critic_config.enabled:
                 critic = ctx.runtime.run_briefing_critic(summary, summary_items)
@@ -939,7 +945,14 @@ class HorizonPipelineService:
                     revised_items = drop_items_flagged_by_critic(summary_items, critic)
                     if len(revised_items) < len(summary_items):
                         summary_items = revised_items
-                        summary = renderer.render(date_str, summary_items, tracked=[])
+                        summary_context["selected_count"] = len(summary_items)
+                        summary = self._render_personal_summary(
+                            renderer,
+                            date_str,
+                            summary_items,
+                            tracked=[],
+                            context=summary_context,
+                        )
                         critic = ctx.runtime.run_briefing_critic(summary, summary_items)
                 if not critic.passed:
                     failed = summary + "\n\n## Предупреждения аудита\n" + "\n".join(
@@ -1014,6 +1027,19 @@ class HorizonPipelineService:
             "preview": summary[:1200],
             "meta": meta,
         }
+
+    @staticmethod
+    def _render_personal_summary(
+        renderer: Any,
+        date: str,
+        items: list[Any],
+        *,
+        tracked: list[dict[str, Any]],
+        context: dict[str, Any],
+    ) -> str:
+        if "context" in signature(renderer.render).parameters:
+            return renderer.render(date, items, tracked=tracked, context=context)
+        return renderer.render(date, items, tracked=tracked)
 
     async def run_pipeline(
         self,

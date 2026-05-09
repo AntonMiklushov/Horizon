@@ -185,7 +185,13 @@
       </div>
     {% endif %}
     {% if source_policy_decisions %}
-      <p class="muted" data-testid="source-policy-decisions">Source policy decisions: {{ source_policy_decisions["items"] | length }} items, {{ source_policy_decisions["excluded"] | length }} exclusions.</p>
+      <p class="muted" data-testid="source-policy-decisions">
+        Source policy decisions:
+        {{ source_policy_decisions.summary.total }} items,
+        {{ source_policy_decisions.summary.excluded }} exclusions,
+        {{ source_policy_decisions.summary.unclassified }} unclassified,
+        {{ source_policy_decisions.summary.downgraded }} downgraded.
+      </p>
     {% endif %}
     {% if meta.run_instructions %}<p><strong>Instructions:</strong> {{ meta.run_instructions }}</p>{% endif %}
   {% endif %}
@@ -276,7 +282,19 @@
   {% if items %}
     <h2>Items</h2>
     <table>
-      <thead><tr><th>Title</th><th>Source</th><th>Score</th><th>Published</th></tr></thead>
+      <thead>
+        <tr>
+          <th>Title</th>
+          <th>Source</th>
+          <th>Score</th>
+          <th>Published</th>
+          <th>Source role</th>
+          <th>Policy decision</th>
+          <th>Claim</th>
+          <th>Confidence</th>
+          <th>Independent</th>
+        </tr>
+      </thead>
       <tbody>
         {% for item in items %}
           <tr>
@@ -284,6 +302,11 @@
             <td>{{ item.source_type }}</td>
             <td>{{ item.ai_score or "" }}</td>
             <td>{{ item.published_at or "" }}</td>
+            <td>{{ item.metadata.source_role or "" }}</td>
+            <td>{{ item.metadata.policy_decision or "" }}</td>
+            <td>{{ item.metadata.claim_type or "" }}</td>
+            <td>{{ item.metadata.confidence or "" }}</td>
+            <td>{{ "yes" if item.metadata.counts_as_independent_confirmation else "no" }}</td>
           </tr>
         {% endfor %}
       </tbody>

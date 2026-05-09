@@ -384,7 +384,13 @@ class HorizonOrchestrator:
                 self.verbose_reporter.event("summary.render", language=lang, items=len(important_items))
                 if self.config.personal_briefing.enabled and lang == self.config.personal_briefing.language:
                     personal_renderer = PersonalBriefingRenderer()
-                    summary = personal_renderer.render(today, summary_items, tracked=tracked_excluded[:10])
+                    summary_context = {
+                        "total_fetched": len(all_items),
+                        "source_items": len(important_items),
+                        "selected_count": len(summary_items),
+                        "threshold": self.config.personal_briefing.min_importance,
+                    }
+                    summary = personal_renderer.render(today, summary_items, tracked=tracked_excluded[:10], context=summary_context)
                     if self.config.personal_briefing.critic_pass.enabled:
                         critic_timer = self.verbose_reporter.start("personal.critic", language=lang, items=len(summary_items))
                         critic = run_briefing_critic(summary, summary_items)
@@ -396,7 +402,8 @@ class HorizonOrchestrator:
                                     removed=len(summary_items) - len(revised_items),
                                 )
                                 summary_items = revised_items
-                                summary = personal_renderer.render(today, summary_items, tracked=tracked_excluded[:10])
+                                summary_context["selected_count"] = len(summary_items)
+                                summary = personal_renderer.render(today, summary_items, tracked=tracked_excluded[:10], context=summary_context)
                                 critic = run_briefing_critic(summary, summary_items)
                         self.verbose_reporter.end(
                             "personal.critic",

@@ -257,6 +257,63 @@ def test_evidence_checker_required_downgrades():
     assert "outside time window" in old.metadata["source_conflicts"]
 
 
+def test_evidence_checker_caps_high_without_supporting_confirmation():
+    checker = EvidenceChecker(time_window_hours=24)
+    classifier = SourcePolicyClassifier(conservative_default_policy())
+    item = mk_item("https://reuters.com/world/a")
+    item.metadata.update(classifier.classify(item))
+    item.metadata.update({
+        "claim_type": "confirmed_fact",
+        "confidence": "high",
+        "evidence_strength": "high",
+    })
+
+    checker.audit_item(item)
+
+    assert item.metadata["claim_type"] == "confirmed_fact"
+    assert item.metadata["confidence"] == "medium"
+    assert item.metadata["evidence_strength"] == "medium"
+    assert "high confidence requires independent supporting source" in item.metadata["unsupported_claims"]
+    assert "confidence capped" in item.metadata["source_policy_notes"]
+
+
+def test_evidence_checker_prevents_discovery_link_confirmed_fact():
+    checker = EvidenceChecker(time_window_hours=24)
+    classifier = SourcePolicyClassifier(conservative_default_policy())
+    item = mk_item(
+        "https://reuters.com/world/a",
+        source=SourceType.TELEGRAM,
+        title="telegram linked reuters fact",
+    )
+    item.metadata.update({"channel": "channel", "msg_url": "https://t.me/channel/1"})
+    item.metadata.update(classifier.classify(item))
+    item.metadata.update({"claim_type": "confirmed_fact", "confidence": "high"})
+
+    checker.audit_item(item)
+
+    assert item.metadata["source_role"] == "fact_layer"
+    assert item.metadata["counts_as_independent_confirmation"] is False
+    assert item.metadata["claim_type"] == "unverified_report"
+    assert item.metadata["confidence"] == "medium"
+    assert "source policy does not allow confirmed_fact" in item.metadata["unsupported_claims"]
+
+
+def test_sensitive_fact_requires_independent_sensitive_support():
+    checker = EvidenceChecker(time_window_hours=24)
+    classifier = SourcePolicyClassifier(conservative_default_policy())
+    item = mk_item("https://reuters.com/world/a", title="War sanctions update")
+    item.metadata.update(classifier.classify(item))
+    item.metadata.update({"claim_type": "confirmed_fact", "confidence": "high"})
+
+    checker.audit_item(item)
+
+    assert item.metadata["sensitive_topic"] is True
+    assert item.metadata["can_confirm_sensitive"] is True
+    assert item.metadata["claim_type"] == "unverified_report"
+    assert item.metadata["confidence"] == "medium"
+    assert "sensitive topic lacks independent sensitive confirmation" in item.metadata["unsupported_claims"]
+
+
 def test_renderer_required_sections_and_labels():
     items = []
     for topic in ["russia", "moscow", "world_economy", "tech_ai", "open_source", "big_tech", "science", "world", "other"]:
@@ -318,6 +375,55 @@ def test_renderer_required_sections_and_labels():
         assert out.count(f"### {topic} title") == 1
 
 
+def test_renderer_separates_statement_items_and_empty_context_passes_critic():
+    statement = mk_item("https://mos.ru/a", title="official statement")
+    statement.metadata.update({
+        "topic": "moscow",
+        "confidence": "medium",
+        "claim_type": "official_statement",
+        "source_role": "official_primary_source",
+        "source_name": "mos.ru",
+        "source_url": "https://mos.ru/a",
+    })
+
+    out = PersonalBriefingRenderer().render("2026-05-03", [statement])
+    assert "## Заявления и сообщения, требующие контекста" in out
+    assert "### official statement" in out
+    assert "Политика источника:" in out
+    assert "независимое подтверждение: нет" in out
+
+    empty = PersonalBriefingRenderer().render(
+        "2026-05-03",
+        [],
+        context={"total_fetched": 3, "source_items": 1, "selected_count": 0, "threshold": 5},
+    )
+    critic = run_briefing_critic(empty, [])
+
+    assert "## Контекст отбора" in empty
+    assert "Прошло в итоговую сводку: 0" in empty
+    assert critic.passed is True
+
+
+def test_critic_fails_high_confidence_without_supporting_confirmation():
+    item = mk_item("https://reuters.com/world/a", title="unsupported high")
+    item.metadata.update({
+        "topic": "world",
+        "confidence": "high",
+        "claim_type": "confirmed_fact",
+        "source_role": "fact_layer",
+        "source_name": "Reuters",
+        "source_url": "https://reuters.com/world/a",
+        "can_confirm_fact": True,
+        "can_confirm_sensitive": True,
+        "counts_as_independent_confirmation": True,
+    })
+    out = PersonalBriefingRenderer().render("2026-05-03", [item])
+    critic = run_briefing_critic(out, [item])
+
+    assert critic.passed is False
+    assert any("high confidence lacks independent supporting source" in issue for issue in critic.critical_issues)
+
+
 def test_renderer_does_not_render_main_for_disputed_only():
     item = mk_item("https://interfax.ru/a", title="disputed-only")
     item.metadata.update({"source_role": "russian_institutional_frame", "confidence": "low", "topic": "world", "summary": "x"})
@@ -341,7 +447,7 @@ def test_renderer_puts_unknown_topics_in_other_without_critic_warning():
     out = PersonalBriefingRenderer().render("2026-05-03", [item])
     critic = run_briefing_critic(out, [item])
 
-    assert "## Другое" in out
+    assert "## Заявления и сообщения, требующие контекста" in out
     assert "### security item" in out
     assert out.count("### security item") == 1
     assert critic.passed is True
@@ -635,7 +741,7 @@ def test_local_personal_smoke_without_real_api(tmp_path, monkeypatch):
     assert "Moscow official" in text
     assert "Reddit link" in text
     assert "## Мир" in text
-    assert "## Москва" in text
+    assert "## Заявления и сообщения, требующие контекста" in text
     assert "fact_layer" in text
     assert "официальный источник" in text
     assert "https://reuters.com/world/test" in text
