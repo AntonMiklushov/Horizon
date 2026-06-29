@@ -26,6 +26,7 @@ from .horizon_adapter import (
     resolve_horizon_path,
 )
 from .run_store import RunStore
+from ..ai.openclaw_provider import resolve_openclaw_ai_config
 from ..services.webhook import WebhookNotifier
 from ..models import AIProvider
 from ..horizon_ext.personal import (
@@ -397,8 +398,14 @@ class HorizonPipelineService:
 
         if check_env:
             required = []
-            if ctx.config.ai.provider != AIProvider.CODEX_CLI and ctx.config.ai.api_key_env:
-                required.append(ctx.config.ai.api_key_env)
+            ai_config = ctx.config.ai
+            if ai_config.provider == AIProvider.OPENCLAW:
+                try:
+                    ai_config = resolve_openclaw_ai_config(ai_config)
+                except ValueError as exc:
+                    warnings.append(str(exc))
+            if ai_config.provider != AIProvider.CODEX_CLI and ai_config.api_key_env:
+                required.append(ai_config.api_key_env)
             for key in required:
                 if not os.getenv(key):
                     missing_env.append(key)

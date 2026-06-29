@@ -13,6 +13,7 @@
 <script>
   const providerMeta = {
     codex_cli: { apiKey: false, baseUrl: false, codexThinking: true },
+    openclaw: { apiKey: false, baseUrl: false, codexThinking: false },
     lm_studio: { apiKey: false, baseUrl: true, codexThinking: false },
     openai: { apiKey: true, baseUrl: true, codexThinking: false },
     anthropic: { apiKey: true, baseUrl: true, codexThinking: false },
@@ -50,6 +51,7 @@
     ali: "Leave empty to use DashScope compatible-mode.",
     doubao: "Doubao uses the Ark OpenAI-compatible endpoint.",
     minimax: "Leave empty to use the MiniMax OpenAI-compatible endpoint.",
+    openclaw: "Uses OpenClaw provider settings and secrets.",
   };
 
   function valueIsEmptyOrKnownDefault(input, knownDefaults) {
@@ -136,6 +138,7 @@
       <label for="llm_provider_mode">Provider</label>
       <select id="llm_provider_mode" name="llm_provider_mode" data-provider-mode-select data-testid="llm-provider-mode">
         <option value="codex_cli" {% if provider_mode == "codex_cli" %}selected{% endif %}>Codex CLI</option>
+        <option value="openclaw" {% if provider_mode == "openclaw" %}selected{% endif %}>OpenClaw shared provider</option>
         <option value="lm_studio" {% if provider_mode == "lm_studio" %}selected{% endif %}>LM Studio</option>
         <option value="openai" {% if provider_mode == "openai" %}selected{% endif %}>OpenAI</option>
         <option value="anthropic" {% if provider_mode == "anthropic" %}selected{% endif %}>Anthropic</option>

@@ -698,6 +698,7 @@ def _provider_label(config: Any) -> str:
     provider_value = getattr(provider, "value", str(provider))
     labels = {
         "codex_cli": "Codex CLI",
+        "openclaw": "OpenClaw shared provider",
         "openai": "OpenAI",
         "anthropic": "Anthropic",
         "gemini": "Gemini",

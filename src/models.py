@@ -52,6 +52,7 @@ class AIProvider(str, Enum):
     DOUBAO = "doubao"
     MINIMAX = "minimax"
     CODEX_CLI = "codex_cli"
+    OPENCLAW = "openclaw"
 
 
 class AIConfig(StrictModel):
@@ -70,6 +71,11 @@ class AIConfig(StrictModel):
     codex_extra_args: List[str] = Field(default_factory=list)
     codex_use_output_last_message: bool = True
     codex_use_json: bool = False
+    # OpenClaw shared-provider mode. Horizon still runs its own pipeline; these
+    # fields only tell Horizon where to read OpenClaw provider/model settings.
+    openclaw_config_path: Optional[str] = None
+    openclaw_env_path: Optional[str] = None
+    openclaw_agent_id: Optional[str] = None
     # Azure OpenAI specific; required when provider == AZURE
     azure_endpoint_env: Optional[str] = None
     api_version: Optional[str] = None
@@ -288,4 +294,5 @@ class Config(StrictModel):
     rendering: RenderingConfig = Field(default_factory=RenderingConfig)
     publishing: PublishingConfig = Field(default_factory=PublishingConfig)
     codex_cli_provider_example: Optional[AIConfig] = None
+    openclaw_provider_example: Optional[AIConfig] = None
     notes: Dict[str, str] = Field(default_factory=dict)

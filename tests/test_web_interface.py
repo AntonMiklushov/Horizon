@@ -129,6 +129,35 @@ def test_basic_settings_form_can_switch_to_lm_studio() -> None:
     assert updated.ai.codex_extra_args == []
 
 
+
+
+def test_basic_settings_form_can_switch_to_openclaw_shared_provider() -> None:
+    config = load_example_config()
+    config.ai.codex_extra_args = ["-c", 'model_reasoning_effort="high"']
+    updated = apply_basic_settings(
+        config,
+        Form(
+            {
+                "llm_provider_mode": "openclaw",
+                "ai_model": "openclaw",
+                "ai_base_url": "https://example.invalid/v1",
+                "ai_api_key_env": "SHOULD_NOT_SAVE",
+                "web_default_hours": "12",
+                "selection_mode": "balanced",
+                "ai_score_threshold": "6.5",
+                "max_items_per_source": "4",
+                "languages": "ru,en",
+                "output_formats": ["markdown", "html"],
+            }
+        ),
+    )
+
+    assert updated.ai.provider == AIProvider.OPENCLAW
+    assert updated.ai.model == "openclaw"
+    assert updated.ai.base_url is None
+    assert updated.ai.api_key_env is None
+    assert updated.ai.codex_extra_args == []
+
 def test_basic_settings_form_can_switch_to_codex_cli_low_thinking() -> None:
     config = load_example_config()
     updated = apply_basic_settings(

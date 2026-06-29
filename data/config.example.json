@@ -24,6 +24,16 @@
     "codex_use_output_last_message": true,
     "codex_use_json": false
   },
+  "openclaw_provider_example": {
+    "provider": "openclaw",
+    "model": "openclaw",
+    "languages": [
+      "ru"
+    ],
+    "openclaw_config_path": "~/.openclaw/openclaw.json",
+    "openclaw_env_path": "~/.openclaw/openclaw.env",
+    "openclaw_agent_id": "spermwhale"
+  },
   "email": {
     "enabled": false,
     "smtp_server": "smtp.qq.com",

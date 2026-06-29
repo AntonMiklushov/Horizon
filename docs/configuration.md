@@ -115,6 +115,23 @@ Use the [DashScope compatible-mode](https://help.aliyun.com/zh/dashscope/develop
 
 Use `provider: "codex_cli"` when you want Horizon to use a local `codex login` session instead of API keys. See [`docs/codex_cli_provider.md`](codex_cli_provider.md).
 
+**OpenClaw shared provider**:
+
+```json
+{
+  "ai": {
+    "provider": "openclaw",
+    "model": "openclaw",
+    "languages": ["ru"],
+    "openclaw_config_path": "~/.openclaw/openclaw.json",
+    "openclaw_env_path": "~/.openclaw/openclaw.env",
+    "openclaw_agent_id": "spermwhale"
+  }
+}
+```
+
+This mode keeps Horizon Brief's own fetch, scoring, enrichment, and rendering pipeline. It only resolves the provider/model and API-key environment names from OpenClaw-compatible settings. A direct model string such as `"openai/gpt-5.5"` may be used instead of reading `OPENCLAW_CONFIG_PATH`.
+
 **LM Studio**:
 
 Use the web dashboard's Basic Settings page and choose `LM Studio`, or configure it as an OpenAI-compatible local endpoint:

@@ -23,7 +23,7 @@ from ...models import (
 
 OUTPUT_FORMATS = ("markdown", "html", "email_html")
 STORY_LISTS = ("top", "new", "best", "ask", "show", "job")
-LLM_PROVIDER_MODES = ("codex_cli", "lm_studio", "openai", "anthropic", "gemini", "ali", "doubao", "minimax")
+LLM_PROVIDER_MODES = ("codex_cli", "openclaw", "lm_studio", "openai", "anthropic", "gemini", "ali", "doubao", "minimax")
 LM_STUDIO_DEFAULT_BASE_URL = "http://127.0.0.1:1234/v1"
 LM_STUDIO_DEFAULT_MODEL = "local-model"
 CODEX_REASONING_EFFORTS = ("minimal", "low", "medium", "high")
@@ -345,6 +345,14 @@ def _apply_ai_settings(config: Config, form: Any) -> None:
         if effort not in CODEX_REASONING_EFFORTS:
             raise ConfigFormError(f"Unsupported Codex reasoning effort: {effort}")
         config.ai.codex_extra_args = ["-c", f'model_reasoning_effort="{effort}"']
+        return
+
+    if provider_mode == AIProvider.OPENCLAW.value:
+        config.ai.provider = AIProvider.OPENCLAW
+        config.ai.model = model or "openclaw"
+        config.ai.base_url = None
+        config.ai.api_key_env = None
+        config.ai.codex_extra_args = []
         return
 
     provider = AIProvider(provider_mode)

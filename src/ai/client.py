@@ -18,6 +18,7 @@ from google import genai
 from google.genai import types
 
 from ..models import AIConfig, AIProvider
+from .openclaw_provider import resolve_openclaw_ai_config
 from .tokens import record_usage
 
 
@@ -771,6 +772,8 @@ def create_ai_client(config: AIConfig) -> AIClient:
     """
     if config.provider == AIProvider.ANTHROPIC:
         return AnthropicClient(config)
+    elif config.provider == AIProvider.OPENCLAW:
+        return create_ai_client(resolve_openclaw_ai_config(config))
     elif config.provider == AIProvider.CODEX_CLI:
         return CodexCliClient(config)
     elif config.provider == AIProvider.OPENAI:

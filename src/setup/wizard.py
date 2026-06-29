@@ -58,10 +58,17 @@ def configure_ai() -> Optional[AIConfig]:
         default="openai",
     )
 
-    default_model = "codex-cli" if provider == "codex_cli" else ("deepseek-chat" if provider == "openai" else "")
+    if provider == "codex_cli":
+        default_model = "codex-cli"
+    elif provider == "openclaw":
+        default_model = "openclaw"
+    elif provider == "openai":
+        default_model = "deepseek-chat"
+    else:
+        default_model = ""
     model = Prompt.ask("Model name", default=default_model)
 
-    base_url = None if provider == "codex_cli" else Prompt.ask("Base URL (leave empty for default)", default="")
+    base_url = None if provider in {"codex_cli", "openclaw"} else Prompt.ask("Base URL (leave empty for default)", default="")
 
     # Determine default env var name
     default_env = {
@@ -73,7 +80,7 @@ def configure_ai() -> Optional[AIConfig]:
         "minimax": "MINIMAX_API_KEY",
     }
     api_key_env = None
-    if provider != "codex_cli":
+    if provider not in {"codex_cli", "openclaw"}:
         api_key_env = Prompt.ask(
             "API key environment variable name",
             default=default_env.get(provider, "API_KEY"),
@@ -82,14 +89,16 @@ def configure_ai() -> Optional[AIConfig]:
         # Check if the key is actually set
         if not os.getenv(api_key_env):
             console.print(
-                f"[yellow]⚠  {api_key_env} is not set in environment or .env file.[/yellow]"
+                f"[yellow]?  {api_key_env} is not set in environment or .env file.[/yellow]"
             )
             console.print("   AI features (smart recommendations) will be skipped.")
             console.print(f"   Add it to your .env file later: {api_key_env}=your_key_here\n")
-    else:
+    elif provider == "codex_cli":
         console.print("[dim]Codex CLI uses your local `codex login` session; no API key is required.[/dim]\n")
+    else:
+        console.print("[dim]OpenClaw mode uses OpenClaw provider settings and secrets; no API key is stored in Horizon config.[/dim]\n")
 
-    default_languages = "ru" if provider == "codex_cli" else "en"
+    default_languages = "ru" if provider in {"codex_cli", "openclaw"} else "en"
     languages = Prompt.ask("Output languages (comma-separated)", default=default_languages)
     lang_list = [l.strip() for l in languages.split(",") if l.strip()]
 
